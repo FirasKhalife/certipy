@@ -126,6 +126,7 @@ let find_rec_annot bl ctx na =
 
 let interp_fix_context ~program_mode ~cofix env sigma fix =
   let sigma, (impl_env, ((env', ctx), imps)) = interp_context_evars ~program_mode env sigma fix.Vernacexpr.binders in
+  if not cofix && Context.Rel.nhyps ctx = 0 then CErrors.user_err Pp.(str "A fixpoint needs at least one parameter.");
   let annot = Option.map (find_rec_annot fix.Vernacexpr.binders ctx) fix.Vernacexpr.rec_order in
   sigma, ((env', ctx), (impl_env, imps), annot)
 
@@ -171,6 +172,8 @@ type ('constr, 'types) recursive_preentry =
 
 let fix_proto sigma =
   Evd.fresh_global (Global.env ()) sigma (Coqlib.lib_ref "program.tactic.fix_proto")
+let fix_proto_relevance = Sorts.Relevant
+(* Would probably be overkill to use a specific fix_proto in SProp when in SProp?? *)
 
 let interp_recursive env ~program_mode ~cofix (fixl : 'a Vernacexpr.fix_expr_gen list) =
   let open Context.Named.Declaration in
@@ -203,8 +206,8 @@ let interp_recursive env ~program_mode ~cofix (fixl : 'a Vernacexpr.fix_expr_gen
     (fun ctximps cclimps (_,ctx) -> ctximps@cclimps)
     fixctximps fixcclimps fixctxs in
   let sigma, rec_sign =
-    List.fold_left2
-      (fun (sigma, env') id t ->
+    List.fold_left3
+      (fun (sigma, env') id r t ->
          if program_mode then
            let sigma, sort = Typing.type_of ~refresh:true env sigma t in
            let sigma, fixprot =
@@ -214,9 +217,9 @@ let interp_recursive env ~program_mode ~cofix (fixl : 'a Vernacexpr.fix_expr_gen
                Typing.solve_evars env sigma app
              with e when CErrors.noncritical e -> sigma, t
            in
-           sigma, LocalAssum (Context.make_annot id Sorts.Relevant,fixprot) :: env'
-         else sigma, LocalAssum (Context.make_annot id Sorts.Relevant,t) :: env')
-      (sigma,[]) fixnames fixtypes
+           sigma, LocalAssum (Context.make_annot id fix_proto_relevance, fixprot) :: env'
+         else sigma, LocalAssum (Context.make_annot id r, t) :: env')
+      (sigma,[]) fixnames fixrs fixtypes
   in
   let env_rec = push_named_context rec_sign env in
 
@@ -284,30 +287,26 @@ let build_recthms ~indexes ?using fixnames fixtypes fiximps =
   in
   fix_kind, cofix, thms
 
-let declare_fixpoint_interactive_generic ?indexes ~scope ?clearbody ~poly ?typing_flags ?deprecation ((fixnames,_fixrs,fixdefs,fixtypes),udecl,ctx,fiximps) ntns =
+let declare_fixpoint_interactive_generic ?indexes ~scope ?clearbody ~poly ?typing_flags ?user_warns ((fixnames,_fixrs,fixdefs,fixtypes),udecl,ctx,fiximps) ntns =
   let fix_kind, cofix, thms = build_recthms ~indexes fixnames fixtypes fiximps in
   let indexes = Option.default [] indexes in
   let init_terms = Some fixdefs in
   let evd = Evd.from_ctx ctx in
-  let info = Declare.Info.make ~poly ~scope ?clearbody ~kind:(Decls.IsDefinition fix_kind) ~udecl ?typing_flags ?deprecation () in
-  let lemma =
-    Declare.Proof.start_mutual_with_initialization ~info
-      evd ~mutual_info:(cofix,indexes,init_terms) ~cinfo:thms None in
-  (* Declare notations *)
-  List.iter (Metasyntax.add_notation_interpretation ~local:(scope=Locality.Discharge) (Global.env())) ntns;
-  lemma
+  let info = Declare.Info.make ~poly ~scope ?clearbody ~kind:(Decls.IsDefinition fix_kind) ~udecl ?typing_flags ?user_warns ~ntns () in
+  Declare.Proof.start_mutual_with_initialization ~info
+    evd ~mutual_info:(cofix,indexes,init_terms) ~cinfo:thms None
 
-let declare_fixpoint_generic ?indexes ?scope ?clearbody ~poly ?typing_flags ?deprecation ?using ((fixnames,fixrs,fixdefs,fixtypes),udecl,uctx,fiximps) ntns =
+let declare_fixpoint_generic ?indexes ?scope ?clearbody ~poly ?typing_flags ?user_warns ?using ((fixnames,fixrs,fixdefs,fixtypes),udecl,uctx,fiximps) ntns =
   (* We shortcut the proof process *)
   let fix_kind, cofix, fixitems = build_recthms ~indexes ?using fixnames fixtypes fiximps in
   let fixdefs = List.map Option.get fixdefs in
   let rec_declaration = prepare_recursive_declaration fixnames fixrs fixtypes fixdefs in
   let fix_kind = Decls.IsDefinition fix_kind in
-  let info = Declare.Info.make ?scope ?clearbody ~kind:fix_kind ~poly ~udecl ?typing_flags ?deprecation () in
+  let info = Declare.Info.make ?scope ?clearbody ~kind:fix_kind ~poly ~udecl ?typing_flags ?user_warns ~ntns () in
   let cinfo = fixitems in
   let _ : GlobRef.t list =
     Declare.declare_mutually_recursive ~cinfo ~info ~opaque:false ~uctx
-      ~possible_indexes:indexes ~ntns ~rec_declaration
+      ~possible_indexes:indexes ~rec_declaration
   in
   ()
 
@@ -343,25 +342,25 @@ let do_fixpoint_common ?typing_flags (fixl : Vernacexpr.fixpoint_expr list) =
   let (_, _, _, info as fix) = interp_fixpoint ~cofix:false ?typing_flags fixl in
   fixl, ntns, fix, List.map compute_possible_guardness_evidences info
 
-let do_fixpoint_interactive ~scope ?clearbody ~poly ?typing_flags ?deprecation l : Declare.Proof.t =
+let do_fixpoint_interactive ~scope ?clearbody ~poly ?typing_flags ?user_warns l : Declare.Proof.t =
   let fixl, ntns, fix, possible_indexes = do_fixpoint_common ?typing_flags l in
-  let lemma = declare_fixpoint_interactive_generic ~indexes:possible_indexes ~scope ?clearbody ~poly ?typing_flags ?deprecation fix ntns in
+  let lemma = declare_fixpoint_interactive_generic ~indexes:possible_indexes ~scope ?clearbody ~poly ?typing_flags ?user_warns fix ntns in
   lemma
 
-let do_fixpoint ?scope ?clearbody ~poly ?typing_flags ?deprecation ?using l =
+let do_fixpoint ?scope ?clearbody ~poly ?typing_flags ?user_warns ?using l =
   let fixl, ntns, fix, possible_indexes = do_fixpoint_common ?typing_flags l in
-  declare_fixpoint_generic ~indexes:possible_indexes ?scope ?clearbody ~poly ?typing_flags ?deprecation ?using fix ntns
+  declare_fixpoint_generic ~indexes:possible_indexes ?scope ?clearbody ~poly ?typing_flags ?user_warns ?using fix ntns
 
 let do_cofixpoint_common (fixl : Vernacexpr.cofixpoint_expr list) =
   let fixl = List.map (fun fix -> {fix with Vernacexpr.rec_order = None}) fixl in
   let ntns = List.map_append (fun { Vernacexpr.notations } -> List.map Metasyntax.prepare_where_notation notations ) fixl in
   interp_fixpoint ~cofix:true fixl, ntns
 
-let do_cofixpoint_interactive ~scope ~poly ?deprecation l =
+let do_cofixpoint_interactive ~scope ?clearbody ~poly ?typing_flags ?user_warns l =
   let cofix, ntns = do_cofixpoint_common l in
-  let lemma = declare_fixpoint_interactive_generic ~scope ~poly ?deprecation cofix ntns in
+  let lemma = declare_fixpoint_interactive_generic ~scope ?clearbody ~poly ?typing_flags ?user_warns cofix ntns in
   lemma
 
-let do_cofixpoint ~scope ~poly ?deprecation ?using l =
+let do_cofixpoint ~scope ?clearbody ~poly ?typing_flags ?user_warns ?using l =
   let cofix, ntns = do_cofixpoint_common l in
-  declare_fixpoint_generic ~scope ~poly ?deprecation ?using cofix ntns
+  declare_fixpoint_generic ~scope ?clearbody ~poly ?typing_flags ?user_warns ?using cofix ntns

@@ -111,7 +111,8 @@ module Info : sig
     -> ?hook : Hook.t
     (** Callback to be executed after saving the constant *)
     -> ?typing_flags:Declarations.typing_flags
-    -> ?deprecation : Deprecation.t
+    -> ?user_warns : UserWarn.t
+    -> ?ntns : Metasyntax.notation_interpretation_decl list
     -> unit
     -> t
 
@@ -136,7 +137,6 @@ val declare_mutually_recursive
   : info:Info.t
   -> cinfo: Constr.t CInfo.t list
   -> opaque:bool
-  -> ntns:Metasyntax.notation_interpretation_decl list
   -> uctx:UState.t
   -> rec_declaration:Constr.rec_declaration
   -> possible_indexes:lemma_possible_guards option
@@ -349,6 +349,7 @@ end
 type proof_entry
 type parameter_entry
 type primitive_entry
+type symbol_entry
 
 val definition_entry
   :  ?opaque:bool
@@ -370,6 +371,12 @@ val primitive_entry
   -> CPrimitives.op_or_type
   -> primitive_entry
 
+val symbol_entry
+  :  ?univs:UState.named_universes_entry
+  -> unfold_fix:bool
+  -> Constr.types
+  -> symbol_entry
+
 (** XXX: This is an internal, low-level API and could become scheduled
     for removal from the public API, use higher-level declare APIs
     instead *)
@@ -377,21 +384,31 @@ val declare_entry
   :  name:Id.t
   -> ?scope:Locality.definition_scope
   -> kind:Decls.logical_kind
-  -> ?deprecation:Deprecation.t
+  -> ?user_warns:UserWarn.t
   -> ?hook:Hook.t
   -> impargs:Impargs.manual_implicits
   -> uctx:UState.t
   -> proof_entry
   -> GlobRef.t
 
+(** Declaration of section variables and local definitions *)
+type variable_declaration =
+  | SectionLocalDef of {
+      clearbody : bool;
+      entry : proof_entry;
+    }
+  | SectionLocalAssum of {
+      typ : Constr.types;
+      impl : Glob_term.binding_kind;
+      univs : UState.named_universes_entry;
+    }
+
 (** Declaration of local constructions (Variable/Hypothesis/Local) *)
 val declare_variable
   :  name:variable
   -> kind:Decls.logical_kind
   -> typing_flags:Declarations.typing_flags option
-  -> typ:Constr.types
-  -> impl:Glob_term.binding_kind
-  -> univs:UState.named_universes_entry
+  -> variable_declaration
   -> unit
 
 (** Declaration of global constructions
@@ -404,6 +421,7 @@ type constant_entry =
   | DefinitionEntry of proof_entry
   | ParameterEntry of parameter_entry
   | PrimitiveEntry of primitive_entry
+  | SymbolEntry of symbol_entry
 
 val prepare_parameter
   : poly:bool
@@ -424,7 +442,7 @@ val declare_constant
   -> name:Id.t
   -> kind:Decls.logical_kind
   -> ?typing_flags:Declarations.typing_flags
-  -> ?deprecation: Deprecation.t
+  -> ?user_warns:UserWarn.t
   -> constant_entry
   -> Constant.t
 
@@ -550,7 +568,6 @@ val add_mutual_definitions :
   -> ?tactic:unit Proofview.tactic
   -> ?reduce:(Constr.t -> Constr.t)
   -> ?opaque:bool
-  -> ntns:Metasyntax.notation_interpretation_decl list
   -> fixpoint_kind
   -> OblState.t
 

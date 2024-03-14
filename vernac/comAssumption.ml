@@ -20,9 +20,9 @@ open Pretyping
 module RelDecl = Context.Rel.Declaration
 (* 2| Variable/Hypothesis/Parameter/Axiom declarations *)
 
-let declare_variable is_coe ~kind typ univs imps impl {CAst.v=name} =
+let declare_variable is_coe ~kind typ univs imps impl name =
   let kind = Decls.IsAssumption kind in
-  let () = Declare.declare_variable ~name ~kind ~typing_flags:None ~typ ~impl ~univs in
+  let () = Declare.declare_variable ~name ~kind ~typing_flags:None (Declare.SectionLocalAssum {typ; impl; univs}) in
   let () = Declare.assumption_message name in
   let r = GlobRef.VarRef name in
   let () = maybe_declare_manual_implicits true r imps in
@@ -32,14 +32,14 @@ let declare_variable is_coe ~kind typ univs imps impl {CAst.v=name} =
   let () =
     if is_coe = Vernacexpr.AddCoercion then
       ComCoercion.try_add_new_coercion
-        r ~local:true ~reversible:true in
-  ()
+        r ~local:true ~reversible:false in
+  (r, UVars.Instance.empty)
 
 let instance_of_univ_entry = function
   | UState.Polymorphic_entry univs -> UVars.UContext.instance univs
   | UState.Monomorphic_entry _ -> UVars.Instance.empty
 
-let declare_axiom is_coe ~local ~kind ?deprecation typ (univs, ubinders) imps nl {CAst.v=name} =
+let declare_axiom is_coe ~local ~kind ?user_warns typ (univs, ubinders) imps nl name =
   let inl = let open Declaremods in match nl with
     | NoInline -> None
     | DefaultInline -> Some (Flags.get_inline_level())
@@ -48,7 +48,7 @@ let declare_axiom is_coe ~local ~kind ?deprecation typ (univs, ubinders) imps nl
   let kind = Decls.IsAssumption kind in
   let entry = Declare.parameter_entry ~univs:(univs, ubinders) ?inline:inl typ in
   let decl = Declare.ParameterEntry entry in
-  let kn = Declare.declare_constant ~name ~local ~kind ?deprecation decl in
+  let kn = Declare.declare_constant ~name ~local ~kind ?user_warns decl in
   let gr = GlobRef.ConstRef kn in
   let () = maybe_declare_manual_implicits false gr imps in
   let () = Declare.assumption_message name in
@@ -59,7 +59,7 @@ let declare_axiom is_coe ~local ~kind ?deprecation typ (univs, ubinders) imps nl
   let () =
     if is_coe = Vernacexpr.AddCoercion then
       ComCoercion.try_add_new_coercion
-        gr ~local ~reversible:true in
+        gr ~local ~reversible:false in
   let inst = instance_of_univ_entry univs in
   (gr,inst)
 
@@ -85,20 +85,19 @@ let clear_univs scope univ =
   | _, (UState.Monomorphic_entry _, _) -> empty_univ_entry ~poly:false
   | Locality.Discharge, (UState.Polymorphic_entry _, _) -> empty_univ_entry ~poly:true
 
-let declare_assumptions ~scope ~kind ?deprecation univs nl l =
+let declare_assumptions ~scope ~kind ?user_warns univs nl l =
   let _, _ = List.fold_left (fun (subst,univs) ((is_coe,idl),typ,imps) ->
       (* NB: here univs are ignored when scope=Discharge *)
       let typ = replace_vars subst typ in
       let univs,subst' =
-        List.fold_left_map (fun univs id ->
+        List.fold_left_map (fun univs {CAst.v=id} ->
             let refu = match scope with
               | Locality.Discharge ->
-                declare_variable is_coe ~kind typ univs imps Glob_term.Explicit id;
-                GlobRef.VarRef id.CAst.v, UVars.Instance.empty
+                declare_variable is_coe ~kind typ univs imps Glob_term.Explicit id
               | Locality.Global local ->
-                declare_axiom is_coe ~local ~kind ?deprecation typ univs imps nl id
+                declare_axiom is_coe ~local ~kind ?user_warns typ univs imps nl id
             in
-            clear_univs scope univs, (id.CAst.v, Constr.mkRef refu))
+            clear_univs scope univs, (id, Constr.mkRef refu))
           univs idl
       in
       subst'@subst, clear_univs scope univs)
@@ -131,7 +130,7 @@ let process_assumptions_udecls ~scope l =
   in
   udecl, List.map (fun (coe, (idl, c)) -> coe, (List.map fst idl, c)) l
 
-let do_assumptions ~program_mode ~poly ~scope ~kind ?deprecation nl l =
+let do_assumptions ~program_mode ~poly ~scope ~kind ?user_warns nl l =
   let open Context.Named.Declaration in
   let env = Global.env () in
   let udecl, l = process_assumptions_udecls ~scope l in
@@ -174,7 +173,7 @@ let do_assumptions ~program_mode ~poly ~scope ~kind ?deprecation nl l =
      this case too. *)
   let sigma = Evd.restrict_universe_context sigma uvars in
   let univs = Evd.check_univ_decl ~poly sigma udecl in
-  declare_assumptions ~scope ~kind ?deprecation univs nl l
+  declare_assumptions ~scope ~kind ?user_warns univs nl l
 
 let context_subst subst (name,b,t,impl) =
   name, Option.map (Vars.substl subst) b, Vars.substl subst t, impl
@@ -185,21 +184,21 @@ let context_insection sigma ~poly ctx =
   let fn i subst (name,_,_,_ as d) =
     let d = context_subst subst d in
     let univs = if i = 0 then univs else empty_univ_entry ~poly in
-    let () = match d with
+    let refu = match d with
       | name, None, t, impl ->
         let kind = Decls.Context in
-        declare_variable NoCoercion ~kind t univs [] impl (CAst.make name)
+        declare_variable NoCoercion ~kind t univs [] impl name
       | name, Some b, t, impl ->
         let entry = Declare.definition_entry ~univs ~types:t b in
         (* XXX Fixme: Use Declare.prepare_definition *)
         let kind = Decls.(IsDefinition Definition) in
-        let _ : GlobRef.t =
+        let gr =
           Declare.declare_entry ~name ~scope:Locality.Discharge
             ~kind ~impargs:[] ~uctx entry
         in
-        ()
+        (gr,UVars.Instance.empty)
     in
-    Constr.mkVar name :: subst
+    Constr.mkRef refu :: subst
   in
   let _ : Vars.substl = List.fold_left_i fn 0 [] ctx in
   ()
@@ -261,9 +260,23 @@ let interp_context env sigma l =
    sigma, ctx
 
 let do_context ~poly l =
+  let sec = Lib.sections_are_opened () in
+  if Dumpglob.dump () then begin
+    let l = List.map (function
+        | Constrexpr.CLocalAssum (l, _, _, _) ->
+           let ty = if sec then "var "else "ax" in List.map (fun n -> ty, n) l
+        | Constrexpr.CLocalDef (n, _, _, _) ->
+           let ty = if sec then "var "else "def" in [ty, n]
+        | Constrexpr.CLocalPattern _ -> [])
+      l in
+    List.iter (function
+        | ty, {CAst.v = Names.Name.Anonymous; _} -> ()
+        | ty, {CAst.v = Names.Name.Name id; loc} ->
+           Dumpglob.dump_definition (CAst.make ?loc id) sec ty)
+      (List.flatten l) end;
   let env = Global.env() in
   let sigma = Evd.from_env env in
   let sigma, ctx = interp_context env sigma l in
-  if Lib.sections_are_opened ()
+  if sec
   then context_insection sigma ~poly ctx
   else context_nosection sigma ~poly ctx

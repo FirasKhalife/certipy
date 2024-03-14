@@ -230,7 +230,7 @@ user to bind a variable and match on it at the same time, in the usual ML style.
 
 There is dedicated syntax for list and array literals.
 
-.. insertprodn ltac2_expr ltac2_tactic_atom
+.. insertprodn ltac2_expr ltac2_atom
 
 .. prodn::
    ltac2_expr ::= @ltac2_expr5 ; @ltac2_expr
@@ -254,12 +254,12 @@ There is dedicated syntax for list and array literals.
    | [ {*; @ltac2_expr5 } ]
    | %{ @ltac2_expr0 with {? {+; @tac2rec_fieldexpr } {? ; } } %}
    | %{ {? {+; @tac2rec_fieldexpr } {? ; } } %}
-   | @ltac2_tactic_atom
+   | @ltac2_atom
    tac2rec_fieldpats ::= @tac2rec_fieldpat ; {? @tac2rec_fieldpats }
    | @tac2rec_fieldpat ;
    | @tac2rec_fieldpat
    tac2rec_fieldpat ::= @qualid {? := @tac2pat1 }
-   ltac2_tactic_atom ::= @integer
+   ltac2_atom ::= @integer
    | @string
    | @qualid
    | @ @ident
@@ -1220,10 +1220,21 @@ Notations
    side (before the `:=`) defines the syntax to recognize and gives formal parameter
    names for the syntactic values.  :n:`@integer` is the level of the notation.
    When the notation is used, the values are substituted
-   into the right-hand side.  The right-hand side is typechecked when the notation is used,
-   not when it is defined.  In the following example, `x` is the formal parameter name and
+   into the right-hand side.  In the following example, `x` is the formal parameter name and
    `constr` is its :ref:`syntactic class<syntactic_classes>`.  `print` and `of_constr` are
    functions provided by Coq through `Message.v`.
+
+   .. flag:: Ltac2 Typed Notations
+
+      By default Ltac2 notations are typechecked at declaration time.
+      This assigns an expected type to notation arguments.
+
+      When a notation is declared with this flag unset, it is not
+      typechecked at declaration time and its expansion is typechecked
+      when it is used. This may allow slightly more flexible use of
+      the notation arguments at the cost of worse error messages when
+      incorrectly using the notation. It is not believed to be useful
+      in practice, please report any real use cases you find.
 
    .. todo "print" doesn't seem to pay attention to "Set Printing All"
 
@@ -1590,10 +1601,11 @@ Here is the syntax for the :n:`q_*` nonterminals:
 .. insertprodn ltac2_simple_intropattern ltac2_equality_intropattern
 
 .. prodn::
-   ltac2_simple_intropattern ::= @ltac2_naming_intropattern
-   | _
-   | @ltac2_or_and_intropattern
+   ltac2_simple_intropattern ::= @ltac2_simple_intropattern_closed {* % @term0 }
+   ltac2_simple_intropattern_closed ::= @ltac2_or_and_intropattern
    | @ltac2_equality_intropattern
+   | _
+   | @ltac2_naming_intropattern
    ltac2_naming_intropattern ::= ?@ident
    | ?$ @ident
    | ?

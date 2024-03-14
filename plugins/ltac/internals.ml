@@ -48,6 +48,8 @@ let with_delayed_uconstr ist c tac =
     expand_evars = true;
     program_mode = false;
     polymorphic = false;
+    undeclared_evars_patvars = false;
+    patvars_abstract = false;
  } in
   let c = Tacinterp.type_uconstr ~flags ist c in
   Tacticals.tclDELAYEDWITHHOLES false c tac
@@ -84,6 +86,8 @@ let constr_flags () = Pretyping.{
   expand_evars = true;
   program_mode = false;
   polymorphic = false;
+  undeclared_evars_patvars = false;
+  patvars_abstract = false;
 }
 
 let refine_tac ist ~simple ~with_classes c =
@@ -343,7 +347,7 @@ let declare_equivalent_keys c c' =
     let evd = Evd.from_env env in
     let (evd, c) = Constrintern.interp_open_constr env evd c in
     let kind c = EConstr.kind evd c in
-    Keys.constr_key kind c
+    Keys.constr_key env kind c
   in
   let k1 = get_key c in
   let k2 = get_key c' in

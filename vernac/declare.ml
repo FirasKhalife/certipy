@@ -85,15 +85,16 @@ module Info = struct
     ; clearbody : bool (* always false for non Discharge scope *)
     ; hook : Hook.t option
     ; typing_flags : Declarations.typing_flags option
-    ; deprecation : Deprecation.t option
+    ; user_warns : UserWarn.t option
+    ; ntns : Metasyntax.notation_interpretation_decl list
     }
 
   (** Note that [opaque] doesn't appear here as it is not known at the
      start of the proof in the interactive case. *)
   let make ?(poly=false) ?(inline=false) ?(kind=Decls.(IsDefinition Definition))
       ?(udecl=UState.default_univ_decl) ?(scope=Locality.default_scope)
-      ?(clearbody=false) ?hook ?typing_flags ?deprecation () =
-    { poly; inline; kind; udecl; scope; hook; typing_flags; clearbody; deprecation }
+      ?(clearbody=false) ?hook ?typing_flags ?user_warns ?(ntns=[]) () =
+    { poly; inline; kind; udecl; scope; hook; typing_flags; clearbody; user_warns; ntns }
 
 end
 
@@ -123,6 +124,12 @@ type parameter_entry = {
 type primitive_entry = {
   prim_entry_type : (Constr.types * UState.named_universes_entry) option;
   prim_entry_content : CPrimitives.op_or_type;
+}
+
+type symbol_entry = {
+  symb_entry_type : Constr.types;
+  symb_entry_unfold_fix: bool;
+  symb_entry_universes : UState.named_universes_entry;
 }
 
 let default_univ_entry = UState.Monomorphic_entry Univ.ContextSet.empty
@@ -155,10 +162,17 @@ let primitive_entry ?types c = {
   prim_entry_content = c;
 }
 
+let symbol_entry ?(univs=default_named_univ_entry) ~unfold_fix symb_entry_type = {
+  symb_entry_universes = univs;
+  symb_entry_unfold_fix = unfold_fix;
+  symb_entry_type;
+}
+
 type constant_entry =
   | DefinitionEntry of proof_entry
   | ParameterEntry of parameter_entry
   | PrimitiveEntry of primitive_entry
+  | SymbolEntry of symbol_entry
 
 let local_csts = Summary.ref ~name:"local-csts" Cset_env.empty
 
@@ -167,14 +181,14 @@ let is_local_constant c = Cset_env.mem c !local_csts
 type constant_obj = {
   cst_kind : Decls.logical_kind;
   cst_locl : Locality.import_status;
-  cst_depr : Deprecation.t option;
+  cst_warn : UserWarn.t option;
 }
 
 let load_constant i ((sp,kn), obj) =
   if Nametab.exists_cci sp then
     raise (DeclareUniv.AlreadyDeclared (None, Libnames.basename sp));
   let con = Global.constant_of_delta_kn kn in
-  Nametab.push ?deprecated:obj.cst_depr (Nametab.Until i) sp (GlobRef.ConstRef con);
+  Nametab.push ?user_warns:obj.cst_warn (Nametab.Until i) sp (GlobRef.ConstRef con);
   Dumpglob.add_constant_kind con obj.cst_kind;
   begin match obj.cst_locl with
     | Locality.ImportNeedQualified -> local_csts := Cset_env.add con !local_csts
@@ -199,7 +213,7 @@ let check_exists id =
 
 let cache_constant ((sp,kn), obj) =
   let kn = Global.constant_of_delta_kn kn in
-  Nametab.push ?deprecated:obj.cst_depr (Nametab.Until 1) sp (GlobRef.ConstRef kn);
+  Nametab.push ?user_warns:obj.cst_warn (Nametab.Until 1) sp (GlobRef.ConstRef kn);
   Dumpglob.add_constant_kind kn obj.cst_kind
 
 let discharge_constant obj = Some obj
@@ -222,9 +236,9 @@ let update_tables c =
   Impargs.declare_constant_implicits c;
   Notation.declare_ref_arguments_scope (GlobRef.ConstRef c)
 
-let register_constant kn kind ?deprecation local =
+let register_constant kn kind ?user_warns local =
   let id = Label.to_id (Constant.label kn) in
-  let o = inConstant (id, { cst_kind = kind; cst_locl = local; cst_depr = deprecation }) in
+  let o = inConstant (id, { cst_kind = kind; cst_locl = local; cst_warn = user_warns }) in
   let () = Lib.add_leaf o in
   update_tables kn
 
@@ -424,13 +438,23 @@ let declare_constant_core ~name ~typing_flags cd =
       } in
       let ubinders = (UState.Monomorphic_entry ctx, ubinders) in
       ConstantEntry (Entries.PrimitiveEntry e), false, ubinders, None
+    | SymbolEntry { symb_entry_type=typ; symb_entry_unfold_fix=un_fix; symb_entry_universes=entry_univs } ->
+      let univ_entry, ctx = extract_monomorphic (fst entry_univs) in
+      let () = Global.push_context_set ~strict:true ctx in
+      let e = {
+        Entries.symb_entry_type = typ;
+        Entries.symb_entry_unfold_fix = un_fix;
+        Entries.symb_entry_universes = univ_entry;
+      } in
+      let ubinders = make_ubinders ctx entry_univs in
+      ConstantEntry (Entries.SymbolEntry e), false, ubinders, None
   in
   let kn = Global.add_constant ?typing_flags name decl in
   let () = DeclareUniv.declare_univ_binders (GlobRef.ConstRef kn) ubinders in
   if unsafe || is_unsafe_typing_flags typing_flags then feedback_axiom();
   kn, delayed
 
-let declare_constant ?(local = Locality.ImportDefaultBehavior) ~name ~kind ~typing_flags ?deprecation cd =
+let declare_constant ?(local = Locality.ImportDefaultBehavior) ~name ~kind ~typing_flags ?user_warns cd =
   let () = check_exists name in
   let kn, delayed = declare_constant_core ~typing_flags ~name cd in
   (* Register the libobjects attached to the constants *)
@@ -442,9 +466,9 @@ let declare_constant ?(local = Locality.ImportDefaultBehavior) ~name ~kind ~typi
     | OpaqueDef o ->
       let (_, _, _, i) = Opaqueproof.repr o in
       Opaques.declare_defined_opaque ?feedback_id i body
-    | Def _ | Undef _ | Primitive _ -> assert false
+    | Def _ | Undef _ | Primitive _ | Symbol _ -> assert false
   in
-  let () = register_constant kn kind local ?deprecation in
+  let () = register_constant kn kind local ?user_warns in
   kn
 
 let declare_private_constant ?role ?(local = Locality.ImportDefaultBehavior) ~name ~kind de =
@@ -473,9 +497,15 @@ let inline_private_constants ~uctx env ce =
 
 (** Declaration of section variables and local definitions *)
 type variable_declaration =
-  | SectionLocalDef of { clearbody : bool; entry : proof_entry }
-  | SectionLocalAssum of { typ:Constr.types; impl:Glob_term.binding_kind ;
-                           univs:UState.named_universes_entry }
+  | SectionLocalDef of {
+      clearbody : bool;
+      entry : proof_entry;
+    }
+  | SectionLocalAssum of {
+      typ : Constr.types;
+      impl : Glob_term.binding_kind;
+      univs : UState.named_universes_entry;
+    }
 
 (* This object is only for things which iterate over objects to find
    variables (only Prettyp.print_context AFAICT) *)
@@ -486,7 +516,7 @@ let objVariable : Id.t Libobject.Dyn.tag =
 
 let inVariable v = Libobject.Dyn.Easy.inj v objVariable
 
-let declare_variable_core ~name ~kind ~typing_flags d =
+let declare_variable ~name ~kind ~typing_flags d =
   (* Variables are distinguished by only short names *)
   if Decls.variable_exists name then
     raise (DeclareUniv.AlreadyDeclared (None, name));
@@ -557,9 +587,6 @@ let declare_variable_core ~name ~kind ~typing_flags d =
   Lib.add_leaf (inVariable name);
   Impargs.declare_var_implicits ~impl name;
   Notation.declare_ref_arguments_scope (GlobRef.VarRef name)
-
-let declare_variable ~name ~kind ~typing_flags ~typ ~impl ~univs =
-  declare_variable_core ~name ~kind ~typing_flags (SectionLocalAssum { typ; impl; univs })
 
 (* Declaration messages *)
 
@@ -679,7 +706,7 @@ let declare_definition_scheme ~internal ~univs ~role ~name ?loc c =
   kn, eff
 
 (* Locality stuff *)
-let declare_entry_core ~name ?(scope=Locality.default_scope) ?(clearbody=false) ~kind ~typing_flags ~deprecation ?hook ~obls ~impargs ~uctx entry =
+let declare_entry_core ~name ?(scope=Locality.default_scope) ?(clearbody=false) ~kind ~typing_flags ~user_warns ?hook ~obls ~impargs ~uctx entry =
   let should_suggest =
     entry.proof_entry_opaque
     && not (List.is_empty (Global.named_context()))
@@ -687,12 +714,12 @@ let declare_entry_core ~name ?(scope=Locality.default_scope) ?(clearbody=false) 
   in
   let dref = match scope with
   | Locality.Discharge ->
-    let () = declare_variable_core ~typing_flags ~name ~kind (SectionLocalDef {clearbody; entry}) in
+    let () = declare_variable ~typing_flags ~name ~kind (SectionLocalDef {clearbody; entry}) in
     if should_suggest then Proof_using.suggest_variable (Global.env ()) name;
     Names.GlobRef.VarRef name
   | Locality.Global local ->
     assert (not clearbody);
-    let kn = declare_constant ~name ~local ~kind ~typing_flags ?deprecation (DefinitionEntry entry) in
+    let kn = declare_constant ~name ~local ~kind ~typing_flags ?user_warns (DefinitionEntry entry) in
     let gr = Names.GlobRef.ConstRef kn in
     if should_suggest then Proof_using.suggest_constant (Global.env ()) kn;
     gr
@@ -718,25 +745,16 @@ let mutual_make_bodies ~typing_flags ~fixitems ~rec_declaration ~possible_indexe
     let vars = Vars.universes_of_constr (List.hd fixdecls) in
     vars, fixdecls, None
 
-let declare_mutually_recursive_core ~info ~cinfo ~opaque ~ntns ~uctx ~rec_declaration ~possible_indexes ?(restrict_ucontext=true) () =
-  let { Info.poly; udecl; scope; clearbody; kind; typing_flags; deprecation; _ } = info in
+let declare_mutually_recursive ~info ~cinfo ~opaque ~uctx ~rec_declaration ~possible_indexes =
+  let { Info.poly; udecl; scope; clearbody; kind; typing_flags; user_warns; ntns; _ } = info in
   let vars, fixdecls, indexes =
     mutual_make_bodies ~typing_flags ~fixitems:cinfo ~rec_declaration ~possible_indexes in
-  let uctx, univs =
-    (* XXX: Obligations don't do this, this seems like a bug? *)
-    if restrict_ucontext
-    then
-      let uctx = UState.restrict uctx vars in
-      let univs = UState.check_univ_decl ~poly uctx udecl in
-      uctx, univs
-    else
-      let univs = UState.univ_entry ~poly uctx in
-      uctx, univs
-  in
+  let uctx = UState.restrict uctx vars in
+  let univs = UState.check_univ_decl ~poly uctx udecl in
   let csts = CList.map2
       (fun CInfo.{ name; typ; impargs; using } body ->
          let entry = definition_entry ~opaque ~types:typ ~univs ?using body in
-         declare_entry ~name ~scope ~clearbody ~kind ~impargs ~uctx ~typing_flags ~deprecation entry)
+         declare_entry ~name ~scope ~clearbody ~kind ~impargs ~uctx ~typing_flags ~user_warns entry)
       cinfo fixdecls
   in
   let isfix = Option.has_some possible_indexes in
@@ -744,8 +762,6 @@ let declare_mutually_recursive_core ~info ~cinfo ~opaque ~ntns ~uctx ~rec_declar
   recursive_message isfix indexes fixnames;
   List.iter (Metasyntax.add_notation_interpretation ~local:(scope=Locality.Discharge) (Global.env())) ntns;
   csts
-
-let declare_mutually_recursive = declare_mutually_recursive_core ~restrict_ucontext:true ()
 
 let warn_let_as_axiom =
   CWarnings.create ~name:"let-as-axiom" ~category:CWarnings.CoreCategories.vernacular
@@ -801,8 +817,8 @@ let prepare_definition ~info ~opaque ?using ~body ~typ sigma =
 let declare_definition_core ~info ~cinfo ~opaque ~obls ~body sigma =
   let { CInfo.name; impargs; typ; using; _ } = cinfo in
   let entry, uctx = prepare_definition ~info ~opaque ?using ~body ~typ sigma in
-  let { Info.scope; clearbody; kind; hook; typing_flags; deprecation; _ } = info in
-  declare_entry_core ~name ~scope ~clearbody ~kind ~impargs ~typing_flags ~deprecation ~obls ?hook ~uctx entry, uctx
+  let { Info.scope; clearbody; kind; hook; typing_flags; user_warns; _ } = info in
+  declare_entry_core ~name ~scope ~clearbody ~kind ~impargs ~typing_flags ~user_warns ~obls ?hook ~uctx entry, uctx
 
 let declare_definition ~info ~cinfo ~opaque ~body sigma =
   declare_definition_core ~obls:[] ~info ~cinfo ~opaque ~body sigma |> fst
@@ -873,13 +889,12 @@ module ProgramDecl = struct
     ; prg_obligations : obligations
     ; prg_deps : Id.t list
     ; prg_fixkind : fixpoint_kind option
-    ; prg_notations : Metasyntax.notation_interpretation_decl list
     ; prg_reduce : constr -> constr
     }
 
   open Obligation
 
-  let make ~info ~cinfo ~opaque ~ntns ~reduce ~deps ~uctx ~body ~fixpoint_kind ?obl_hook obls =
+  let make ~info ~cinfo ~opaque ~reduce ~deps ~uctx ~body ~fixpoint_kind ?obl_hook obls =
     let obls', body =
       match body with
       | None ->
@@ -916,7 +931,6 @@ module ProgramDecl = struct
     ; prg_obligations = {obls = obls'; remaining = Array.length obls'}
     ; prg_deps = deps
     ; prg_fixkind = fixpoint_kind
-    ; prg_notations = ntns
     ; prg_reduce = reduce }
 
   let show prg =
@@ -1289,9 +1303,9 @@ let declare_mutual_definition ~pm l =
   in
   (* Declare the recursive definitions *)
   let kns =
-    declare_mutually_recursive_core ~info:first.prg_info ~ntns:first.prg_notations
+    declare_mutually_recursive ~info:first.prg_info
       ~uctx:first.prg_uctx ~rec_declaration ~possible_indexes ~opaque:first.prg_opaque
-      ~restrict_ucontext:false ~cinfo:fixitems ()
+      ~cinfo:fixitems
   in
   (* Only for the first constant *)
   let dref = List.hd kns in
@@ -1662,8 +1676,16 @@ let start_mutual_with_initialization ~info ~cinfo ~mutual_info sigma snl =
        to thms, once Info.t is more refined this won't be necessary *)
     let typ = EConstr.of_constr typ in
     let lemma = start_proof_core ~name ~typ ~pinfo sigma in
-    map lemma ~f:(fun p ->
-        pi1 @@ Proof.run_tactic Global.(env ()) init_tac p)
+    let lemma = map lemma ~f:(fun p ->
+        pi1 @@ Proof.run_tactic Global.(env ()) init_tac p) in
+    let () =
+      (* Temporary declaration of notations for the time of the proofs *)
+      let ntn_env =
+        (* We simulate the goal context in which the fixpoint bodies have to be proved (exact relevance does not matter) *)
+        let make_decl CInfo.{name; typ} = Context.Named.Declaration.LocalAssum (Context.annotR name, typ) in
+        Environ.push_named_context (List.map make_decl cinfo) (Global.env()) in
+      List.iter (Metasyntax.add_notation_interpretation ~local:(info.scope=Locality.Discharge) ntn_env) info.ntns in
+    lemma
 
 let get_used_variables pf = pf.using
 let get_universe_decl pf = pf.pinfo.Proof_info.info.Info.udecl
@@ -1823,6 +1845,9 @@ let close_proof ?warn_incomplete ~opaque ~keep_body_ucst_separate ps =
       (* allow_deferred case *)
       if not poly &&
          (keep_body_ucst_separate
+          (* checking is_empty_private_constants prevents an undefined universe anomaly
+             cf test-suite/success/rewrite.v Qed for lemma l1
+             not sure what's going on, there's probably a better way to work *)
           || not (Safe_typing.is_empty_private_constants eff.Evd.seff_private))
       then make_univs_deferred ~initial_euctx ~poly ~uctx ~udecl t b
       (* private_poly_univs case *)
@@ -1928,6 +1953,14 @@ let build_by_tactic env ~uctx ~poly ~typ tac =
   cb, ce.proof_entry_type, ce.proof_entry_universes, status, uctx
 
 let declare_abstract ~name ~poly ~kind ~sign ~secsign ~opaque ~solve_tac sigma concl =
+  let sigma, concl =
+    (* FIXME: should be done only if the tactic succeeds *)
+    (* XXX maybe we can fix now that we support evars
+       if close_proof stops caring about is_empty_private_constants we can remove the minimization
+       see #18636 *)
+    let sigma = Evd.minimize_universes sigma in
+    sigma, Evarutil.nf_evar sigma concl
+  in
   let (const, safe, sigma') =
     try build_constant_by_tactic ~warn_incomplete:false ~name ~opaque:Vernacexpr.Transparent ~poly ~sigma ~sign:secsign concl solve_tac
     with Logic_monad.TacticFailure e as src ->
@@ -2034,7 +2067,7 @@ end = struct
 
   let declare_mutdef ~uctx ~pinfo pe i CInfo.{ name; impargs; typ; _} =
     let { Proof_info.info; compute_guard; _ } = pinfo in
-    let { Info.hook; scope; clearbody; kind; typing_flags; deprecation; _ } = info in
+    let { Info.hook; scope; clearbody; kind; typing_flags; user_warns; _ } = info in
     (* if i = 0 , we don't touch the type; this is for compat
        but not clear it is the right thing to do.
     *)
@@ -2053,7 +2086,7 @@ end = struct
         Internal.map_entry_body pe
           ~f:(fun ((body, ctx), eff) -> (select_body i body, ctx), eff)
     in
-    declare_entry ~name ~scope ~clearbody ~kind ?hook ~impargs ~typing_flags ~deprecation ~uctx pe
+    declare_entry ~name ~scope ~clearbody ~kind ?hook ~impargs ~typing_flags ~user_warns ~uctx pe
 
   let declare_mutdef ~pinfo ~uctx ~entry =
     let pe = match pinfo.Proof_info.compute_guard with
@@ -2068,7 +2101,14 @@ end = struct
       Internal.map_entry_body entry
         ~f:(guess_decreasing env possible_indexes)
     in
-    List.map_i (declare_mutdef ~pinfo ~uctx pe) 0 pinfo.Proof_info.cinfo
+    let refs = List.map_i (declare_mutdef ~pinfo ~uctx pe) 0 pinfo.Proof_info.cinfo in
+    let () =
+      (* We override the temporary notations used while proving, now using the global names *)
+      let local = pinfo.info.scope=Locality.Discharge in
+      CWarnings.with_warn ("-"^Notation.warning_overridden_name)
+        (List.iter (Metasyntax.add_notation_interpretation ~local (Global.env()))) pinfo.info.ntns
+    in
+    refs
 
   let declare_possibly_mutual_parameters ~pinfo ~uctx ~sec_vars ~univs =
     let { Info.scope; hook } = pinfo.Proof_info.info in
@@ -2552,7 +2592,7 @@ let add_definition ~pm ~cinfo ~info ?obl_hook ?term ~uctx
     ?tactic ?(reduce = reduce) ?(opaque = false) obls =
   let obl_hook = Option.map (fun h -> State.PrgHook h) obl_hook in
   let prg =
-    ProgramDecl.make ~info ~cinfo ~body:term ~opaque ~uctx ~reduce ~ntns:[] ~deps:[] ~fixpoint_kind:None ?obl_hook obls
+    ProgramDecl.make ~info ~cinfo ~body:term ~opaque ~uctx ~reduce ~deps:[] ~fixpoint_kind:None ?obl_hook obls
   in
   let name = CInfo.get_name cinfo in
   let {obls;_} = Internal.get_obligations prg in
@@ -2571,7 +2611,7 @@ let add_definition ~pm ~cinfo ~info ?obl_hook ?term ~uctx
     | _ -> pm, res
 
 let add_mutual_definitions l ~pm ~info ?obl_hook ~uctx
-    ?tactic ?(reduce = reduce) ?(opaque = false) ~ntns fixkind =
+    ?tactic ?(reduce = reduce) ?(opaque = false) fixkind =
   let obl_hook = Option.map (fun h -> State.PrgHook h) obl_hook in
   let deps = List.map (fun (ci,_,_) -> CInfo.get_name ci) l in
   let pm =
@@ -2579,7 +2619,7 @@ let add_mutual_definitions l ~pm ~info ?obl_hook ~uctx
       (fun pm (cinfo, b, obls) ->
         let prg =
           ProgramDecl.make ~info ~cinfo ~opaque ~body:(Some b) ~uctx ~deps
-            ~fixpoint_kind:(Some fixkind) ~ntns ~reduce ?obl_hook obls
+            ~fixpoint_kind:(Some fixkind) ~reduce ?obl_hook obls
         in
         State.add pm (CInfo.get_name cinfo) prg)
       pm l
@@ -2671,5 +2711,5 @@ module OblState = Obls_.State
 let declare_constant ?local ~name ~kind ?typing_flags =
   declare_constant ?local ~name ~kind ~typing_flags
 
-let declare_entry ~name ?scope ~kind ?deprecation =
-  declare_entry ~name ?scope ~kind ~typing_flags:None ?clearbody:None ~deprecation
+let declare_entry ~name ?scope ~kind ?user_warns =
+  declare_entry ~name ?scope ~kind ~typing_flags:None ?clearbody:None ~user_warns

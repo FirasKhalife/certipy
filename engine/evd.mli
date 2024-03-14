@@ -372,6 +372,8 @@ val rename : Evar.t -> Id.t -> evar_map -> evar_map
 
 val evar_key : Id.t -> evar_map -> Evar.t
 
+val evar_names : evar_map -> Nameops.Fresh.t
+
 val evar_source_of_meta : metavariable -> evar_map -> Evar_kinds.t located
 
 val dependent_evar_ident : Evar.t -> evar_map -> Id.t
@@ -793,6 +795,7 @@ module MiniEConstr : sig
 
   val to_constr : ?abort_on_undefined_evars:bool -> evar_map -> t -> Constr.t
   val to_constr_opt : evar_map -> t -> Constr.t option
+  val nf_evar : evar_map -> t -> t
 
   val unsafe_to_constr : t -> Constr.t
   val unsafe_to_constr_array : t array -> Constr.t array

@@ -256,6 +256,73 @@ let check_sort_poly sigma gr u =
           ++ str "(instantiation of " ++ Nametab.pr_global_env Id.Set.empty gr
           ++ spc() ++ str "using Prop or SProp).")
 
+let relevance_of_projection_repr mib p =
+  let _mind,i = Names.Projection.Repr.inductive p in
+  match mib.mind_record with
+  | NotRecord | FakeRecord ->
+    CErrors.anomaly ~label:"relevance_of_projection" Pp.(str "not a projection")
+  | PrimRecord infos ->
+    let _,_,rs,_ = infos.(i) in
+    rs.(Names.Projection.Repr.arg p)
+
+(** Because of automatic unboxing the easy way [mk_def c] on the
+   constant body of primitive projections doesn't work. We pretend
+   that they are implemented by matches until someone figures out how
+   to clean it up (test with #4710 when working on this). *)
+let fake_match_projection env p =
+  let ind = Projection.Repr.inductive p in
+  let proj_arg = Projection.Repr.arg p in
+  let mib, mip = Inductive.lookup_mind_specif env ind in
+  let u = UVars.make_abstract_instance (Declareops.inductive_polymorphic_context mib) in
+  let indu = mkIndU (ind,u) in
+  let ctx, paramslet =
+    let subst = List.init mib.mind_ntypes (fun i -> mkIndU ((fst ind, mib.mind_ntypes - i - 1), u)) in
+    let (ctx, cty) = mip.mind_nf_lc.(0) in
+    let cty = Term.it_mkProd_or_LetIn cty ctx in
+    let rctx, _ = decompose_prod_decls (Vars.substl subst cty) in
+    List.chop mip.mind_consnrealdecls.(0) rctx
+  in
+  let ci_pp_info = { ind_tags = []; cstr_tags = [|Context.Rel.to_tags ctx|]; style = LetStyle } in
+  let ci = {
+    ci_ind = ind;
+    ci_npar = mib.mind_nparams;
+    ci_cstr_ndecls = mip.mind_consnrealdecls;
+    ci_cstr_nargs = mip.mind_consnrealargs;
+    ci_pp_info;
+  }
+  in
+  let relevance = relevance_of_projection_repr mib p in
+  let x = match mib.mind_record with
+    | NotRecord | FakeRecord -> assert false
+    | PrimRecord info ->
+      let x, _, _, _ = info.(snd ind) in
+      make_annot (Name x) mip.mind_relevance
+  in
+  let indty = mkApp (indu, Context.Rel.instance mkRel 0 paramslet) in
+  let rec fold arg j subst = function
+    | [] -> assert false
+    | LocalAssum (na,ty) :: rem ->
+      let ty = Vars.substl subst (liftn 1 j ty) in
+      if arg != proj_arg then
+        let lab = match na.binder_name with Name id -> Label.of_id id | Anonymous -> assert false in
+        let kn = Projection.Repr.make ind ~proj_npars:mib.mind_nparams ~proj_arg:arg lab in
+        fold (arg+1) (j+1) (mkProj (Projection.make kn false, na.binder_relevance, mkRel 1)::subst) rem
+      else
+        let p = ([|x|], liftn 1 2 ty) in
+        let branch =
+          let nas = Array.of_list (List.rev_map Context.Rel.Declaration.get_annot ctx) in
+          (nas, mkRel (List.length ctx - (j - 1)))
+        in
+        let params = Context.Rel.instance mkRel 1 paramslet in
+        let body = mkCase (ci, u, params, (p,relevance), NoInvert, mkRel 1, [|branch|]) in
+        it_mkLambda_or_LetIn (mkLambda (x,indty,body)) mib.mind_params_ctxt
+    | LocalDef (_,c,t) :: rem ->
+      let c = liftn 1 j c in
+      let c1 = Vars.substl subst c in
+      fold arg (j+1) (c1::subst) rem
+  in
+  fold 0 1 [] (List.rev ctx)
+
 (*S Extraction of a type. *)
 
 (* [extract_type env db c args] is used to produce an ML type from the
@@ -322,7 +389,7 @@ let rec extract_type env sg db j c args =
            | (Info, Default) ->
                (* Not an ML type, for example [(c:forall X, X->X) Type nat] *)
                (match (lookup_constant kn env).const_body with
-                 | Undef _  | OpaqueDef _ | Primitive _ -> Tunknown (* Brutal approx ... *)
+                 | Undef _  | OpaqueDef _ | Primitive _ | Symbol _ -> Tunknown (* Brutal approx ... *)
                   | Def lbody ->
                       (* We try to reduce. *)
                       let newc = applistc (get_body lbody) args in
@@ -563,7 +630,7 @@ and mlt_env env r = let open GlobRef in match r with
   | ConstRef kn ->
      let cb = Environ.lookup_constant kn env in
      match cb.const_body with
-     | Undef _ | OpaqueDef _ | Primitive _ -> None
+     | Undef _ | OpaqueDef _ | Primitive _ | Symbol _ -> None
      | Def l_body ->
         match lookup_typedef kn cb with
         | Some _ as o -> o
@@ -660,8 +727,13 @@ let rec extract_term env sg mle mlt c args =
         let () = check_sort_poly sg (ConstructRef cp) u in
         extract_cons_app env sg mle mlt cp args
     | Proj (p, _, c) ->
-        let term = Retyping.expand_projection env (Evd.from_env env) p c [] in
-        extract_term env sg mle mlt term args
+        let p = Projection.repr p in
+        let term = fake_match_projection env p in
+        let ind = Inductiveops.find_rectype env sg (Retyping.get_type_of env sg c) in
+        let indf,_ = Inductiveops.dest_ind_type ind in
+        let _,indargs = Inductiveops.dest_ind_family indf in
+        let indargs = List.map EConstr.of_constr indargs in
+        extract_term env sg mle mlt (beta_applist sg (EConstr.of_constr term,indargs@[c])) args
     | Rel n ->
         (* As soon as the expected [mlt] for the head is known, *)
         (* we unify it with an fresh copy of the stored type of [Rel n]. *)
@@ -1035,73 +1107,6 @@ let extract_fixpoint env sg vkn (fi,ti,ci) =
   current_fixpoints := [];
   Dfix (Array.map (fun kn -> GlobRef.ConstRef kn) vkn, terms, types)
 
-let relevance_of_projection_repr mib p =
-  let _mind,i = Names.Projection.Repr.inductive p in
-  match mib.mind_record with
-  | NotRecord | FakeRecord ->
-    CErrors.anomaly ~label:"relevance_of_projection" Pp.(str "not a projection")
-  | PrimRecord infos ->
-    let _,_,rs,_ = infos.(i) in
-    rs.(Names.Projection.Repr.arg p)
-
-(** Because of automatic unboxing the easy way [mk_def c] on the
-   constant body of primitive projections doesn't work. We pretend
-   that they are implemented by matches until someone figures out how
-   to clean it up (test with #4710 when working on this). *)
-let fake_match_projection env p =
-  let ind = Projection.Repr.inductive p in
-  let proj_arg = Projection.Repr.arg p in
-  let mib, mip = Inductive.lookup_mind_specif env ind in
-  let u = UVars.make_abstract_instance (Declareops.inductive_polymorphic_context mib) in
-  let indu = mkIndU (ind,u) in
-  let ctx, paramslet =
-    let subst = List.init mib.mind_ntypes (fun i -> mkIndU ((fst ind, mib.mind_ntypes - i - 1), u)) in
-    let (ctx, cty) = mip.mind_nf_lc.(0) in
-    let cty = Term.it_mkProd_or_LetIn cty ctx in
-    let rctx, _ = decompose_prod_decls (Vars.substl subst cty) in
-    List.chop mip.mind_consnrealdecls.(0) rctx
-  in
-  let ci_pp_info = { ind_tags = []; cstr_tags = [|Context.Rel.to_tags ctx|]; style = LetStyle } in
-  let ci = {
-    ci_ind = ind;
-    ci_npar = mib.mind_nparams;
-    ci_cstr_ndecls = mip.mind_consnrealdecls;
-    ci_cstr_nargs = mip.mind_consnrealargs;
-    ci_pp_info;
-  }
-  in
-  let relevance = relevance_of_projection_repr mib p in
-  let x = match mib.mind_record with
-    | NotRecord | FakeRecord -> assert false
-    | PrimRecord info ->
-      let x, _, _, _ = info.(snd ind) in
-      make_annot (Name x) mip.mind_relevance
-  in
-  let indty = mkApp (indu, Context.Rel.instance mkRel 0 paramslet) in
-  let rec fold arg j subst = function
-    | [] -> assert false
-    | LocalAssum (na,ty) :: rem ->
-      let ty = Vars.substl subst (liftn 1 j ty) in
-      if arg != proj_arg then
-        let lab = match na.binder_name with Name id -> Label.of_id id | Anonymous -> assert false in
-        let kn = Projection.Repr.make ind ~proj_npars:mib.mind_nparams ~proj_arg:arg lab in
-        fold (arg+1) (j+1) (mkProj (Projection.make kn false, na.binder_relevance, mkRel 1)::subst) rem
-      else
-        let p = ([|x|], liftn 1 2 ty) in
-        let branch =
-          let nas = Array.of_list (List.rev_map Context.Rel.Declaration.get_annot ctx) in
-          (nas, mkRel (List.length ctx - (j - 1)))
-        in
-        let params = Context.Rel.instance mkRel 1 paramslet in
-        let body = mkCase (ci, u, params, (p,relevance), NoInvert, mkRel 1, [|branch|]) in
-        it_mkLambda_or_LetIn (mkLambda (x,indty,body)) mib.mind_params_ctxt
-    | LocalDef (_,c,t) :: rem ->
-      let c = liftn 1 j c in
-      let c1 = Vars.substl subst c in
-      fold arg (j+1) (c1::subst) rem
-  in
-  fold 0 1 [] (List.rev ctx)
-
 let extract_constant env kn cb =
   let sg = Evd.from_env env in
   let r = GlobRef.ConstRef kn in
@@ -1136,6 +1141,7 @@ let extract_constant env kn cb =
     | (Logic,Default) -> warn_log (); Dterm (r, MLdummy Kprop, Tdummy Kprop)
     | (Info,TypeScheme) ->
         (match cb.const_body with
+          | Symbol _ -> add_symbol r; mk_typ_ax ()
           | Primitive _ | Undef _ -> warn_info (); mk_typ_ax ()
           | Def c ->
              (match Structures.PrimitiveProjections.find_opt kn with
@@ -1149,6 +1155,7 @@ let extract_constant env kn cb =
             else mk_typ_ax ())
     | (Info,Default) ->
         (match cb.const_body with
+          | Symbol _ -> add_symbol r; mk_ax ()
           | Primitive _ | Undef _ -> warn_info (); mk_ax ()
           | Def c ->
              (match Structures.PrimitiveProjections.find_opt kn with
@@ -1176,7 +1183,7 @@ let extract_constant_spec env kn cb =
     | (Info, TypeScheme) ->
         let s,vl = type_sign_vl env sg typ in
         (match cb.const_body with
-          | Undef _ | OpaqueDef _ | Primitive _ -> Stype (r, vl, None)
+          | Undef _ | OpaqueDef _ | Primitive _ | Symbol _ -> Stype (r, vl, None)
           | Def body ->
               let db = db_from_sign s in
               let body = get_body body in

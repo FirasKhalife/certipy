@@ -330,6 +330,10 @@ let default_core_unify_flags () =
   modulo_eta = true;
  }
 
+let ts_var_full =
+  let open TransparentState in
+  { tr_var = Id.Pred.full; tr_cst = Cpred.empty; tr_prj = PRpred.empty }
+
 (* Default flag for first-order or second-order unification of a type *)
 (* against another type (e.g. apply)                                  *)
 (* We set all conversion flags (no flag should be modified anymore)   *)
@@ -337,7 +341,7 @@ let default_unify_flags () =
   let flags = default_core_unify_flags () in {
   core_unify_flags = flags;
   merge_unify_flags = flags;
-  subterm_unify_flags = { flags with modulo_delta = TransparentState.var_full };
+  subterm_unify_flags = { flags with modulo_delta = ts_var_full };
   allow_K_in_toplevel_higher_order_unification = false; (* Why not? *)
   resolve_evars = false
 }
@@ -460,25 +464,76 @@ let use_metas_pattern_unification sigma flags nb l =
   || flags.use_meta_bound_pattern_unification &&
      Array.for_all (fun c -> isRel sigma c && destRel sigma c <= nb) l
 
+
+(* [unfold_projection_under_eta env ts n c] checks if [c] is the eta
+   expanded, folded primitive projection of name [n] and unfolds the primitive
+   projection. It respects projection transparency of [ts]. *)
+let unfold_projection_under_eta env ts n c =
+  let unfold_projection env ts p r c =
+    if TransparentState.is_transparent_projection ts (Projection.repr p) then
+      Some (Constr.mkProj (Projection.unfold p, r, c))
+    else None
+  in
+  let rec go c lams =
+    match Constr.kind c with
+    | Lambda (b, t, c) -> go c ((b,t)::lams)
+    | Proj (p, r, c) when QConstant.equal env n (Projection.constant p) ->
+      let c = unfold_projection env ts p r c in
+      begin
+        match c with
+        | None -> None
+        | Some c ->
+          let f c (b,t) = Constr.mkLambda (b,t,c) in
+          Some (List.fold_left f c lams)
+      end
+    | _ -> None
+  in
+  go c []
+
+
 type key =
   | IsKey of CClosure.table_key
   | IsProj of Projection.t * Sorts.relevance * EConstr.constr
 
-let expand_table_key env = function
-  | ConstKey cst -> constant_opt_value_in env cst
-  | VarKey id -> (try named_body id env with Not_found -> None)
+let expand_table_key ts env sigma args = function
+  | ConstKey (c, _ as cst) ->
+      if Structures.PrimitiveProjections.is_transparent_constant ts c then
+        match constant_value_in env cst with
+        (* If we are unfolding a compatibility constant we want to return the
+            unfolded primitive projection directly since we would like to pretend
+            that the compatibility constant itself does not count as an unfolding
+            (delta) step. *)
+        | def ->
+        let unf = unfold_projection_under_eta env ts c def in
+        Some (EConstr.of_constr @@ Option.default def unf, args)
+        | exception NotEvaluableConst (HasRules (u, b, r)) ->
+        begin try
+          let sk = Stack.( append_app args empty ) in
+          let rhs, stack = Reductionops.apply_rules
+            (whd_betaiota_deltazeta_for_iota_state ts env sigma) env sigma (EInstance.make u) r sk
+          in
+          let args' = Stack.list_of_app_stack stack
+            |> (function Some l -> l | None -> assert false)
+            |> Array.of_list in
+          Some (rhs, args')
+        with PatternFailure -> None
+        (* TODO: try unfold fix *)
+        end
+        | exception NotEvaluableConst _ -> None
+      else None
+  | VarKey id -> (try named_body id env |> Option.map (fun c -> (EConstr.of_constr c, args)) with Not_found -> None)
   | RelKey _ -> None
 
 let unfold_projection env p r stk =
   let s = Stack.Proj (p,r) in
   s :: stk
 
-let expand_key ts env sigma = function
-  | Some (IsKey k) -> Option.map EConstr.of_constr (expand_table_key env k)
+let expand_key ts env sigma args = function
+  | Some (IsKey k) -> (expand_table_key ts env sigma args k)
   | Some (IsProj (p, r, c)) ->
     let red = Stack.zip sigma (whd_betaiota_deltazeta_for_iota_state ts env sigma
                                (c, unfold_projection env p r []))
-    in if EConstr.eq_constr sigma (EConstr.mkProj (p, r, c)) red then None else Some red
+    in if EConstr.eq_constr sigma (EConstr.mkProj (p, r, c)) red then None else Some (red, args)
   | None -> None
 
 let isApp_or_Proj sigma c =
@@ -498,29 +553,29 @@ let subterm_restriction opt flags =
 let key_of env sigma b flags f =
   if subterm_restriction b flags then None else
   match EConstr.kind sigma f with
-  | Const (cst, u) when is_transparent env (ConstKey cst) &&
-      (TransparentState.is_transparent_constant flags.modulo_delta cst
+  | Const (cst, u) when is_transparent env (Evaluable.EvalConstRef cst) &&
+      (Structures.PrimitiveProjections.is_transparent_constant flags.modulo_delta cst
        || PrimitiveProjections.mem cst) ->
       let u = EInstance.kind sigma u in
       Some (IsKey (ConstKey (cst, u)))
-  | Var id when is_transparent env (VarKey id) &&
+  | Var id when is_transparent env (Evaluable.EvalVarRef id) &&
       TransparentState.is_transparent_variable flags.modulo_delta id ->
     Some (IsKey (VarKey id))
   | Proj (p, r, c) when Names.Projection.unfolded p
-    || (is_transparent env (ConstKey (Projection.constant p)) &&
-       (TransparentState.is_transparent_constant flags.modulo_delta (Projection.constant p))) ->
+    || (is_transparent env (Evaluable.EvalProjectionRef (Projection.repr p)) &&
+       (TransparentState.is_transparent_projection flags.modulo_delta (Projection.repr p))) ->
     Some (IsProj (p, r, c))
   | _ -> None
 
 
 let translate_key = function
-  | ConstKey (cst,u) -> ConstKey cst
-  | VarKey id -> VarKey id
-  | RelKey n -> RelKey n
+  | ConstKey (cst,u) -> Some (Evaluable.EvalConstRef cst)
+  | VarKey id -> Some (Evaluable.EvalVarRef id)
+  | RelKey _ -> None
 
 let translate_key = function
   | IsKey k -> translate_key k
-  | IsProj (c, _, _) -> ConstKey (Projection.constant c)
+  | IsProj (p, _, _) -> Some (Evaluable.EvalProjectionRef (Projection.repr p))
 
 let oracle_order env cf1 cf2 =
   match cf1 with
@@ -540,12 +595,12 @@ let oracle_order env cf1 cf2 =
           when Environ.QConstant.equal env p (Projection.constant p') ->
           Some (Projection.unfolded p')
         | _ ->
-          Some (Conv_oracle.oracle_order (fun x -> x)
+          Some (Conv_oracle.oracle_order
                   (Environ.oracle env) false (translate_key k1) (translate_key k2))
 
 let is_rigid_head sigma flags t =
   match EConstr.kind sigma t with
-  | Const (cst,u) -> not (TransparentState.is_transparent_constant flags.modulo_delta cst)
+  | Const (cst,u) -> not (Structures.PrimitiveProjections.is_transparent_constant flags.modulo_delta cst)
   | Ind (i,u) -> true
   | Construct _ | Int _ | Float _ | Array _ -> true
   | Fix _ | CoFix _ -> true
@@ -635,11 +690,11 @@ let rec is_neutral env sigma ts t =
     match EConstr.kind sigma f with
     | Const (c, u) ->
       not (Environ.evaluable_constant c env) ||
-      not (is_transparent env (ConstKey c)) ||
-      not (TransparentState.is_transparent_constant ts c)
+      not (is_transparent env (Evaluable.EvalConstRef c)) ||
+      not (Structures.PrimitiveProjections.is_transparent_constant ts c)
     | Var id ->
       not (Environ.evaluable_named id env) ||
-      not (is_transparent env (VarKey id)) ||
+      not (is_transparent env (Evaluable.EvalVarRef id)) ||
       not (TransparentState.is_transparent_variable ts id)
     | Rel n -> true
     | Evar _ | Meta _ -> true
@@ -1077,27 +1132,27 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
         match oracle_order curenv cf1 cf2 with
         | None -> error_cannot_unify curenv sigma (cM,cN)
         | Some true ->
-            (match expand_key flags.modulo_delta curenv sigma cf1 with
-            | Some c ->
+            (match expand_key flags.modulo_delta curenv sigma l1 cf1 with
+            | Some c_l1 ->
                 unirec_rec curenvnb pb opt substn
-                  (whd_betaiotazeta curenv sigma (mkApp(c,l1))) cN
+                  (whd_betaiotazeta curenv sigma (mkApp c_l1)) cN
             | None ->
-                (match expand_key flags.modulo_delta curenv sigma cf2 with
-                | Some c ->
+                (match expand_key flags.modulo_delta curenv sigma l2 cf2 with
+                | Some c_l2 ->
                     unirec_rec curenvnb pb opt substn cM
-                      (whd_betaiotazeta curenv sigma (mkApp(c,l2)))
+                      (whd_betaiotazeta curenv sigma (mkApp c_l2))
                 | None ->
                     error_cannot_unify curenv sigma (cM,cN)))
         | Some false ->
-            (match expand_key flags.modulo_delta curenv sigma cf2 with
-            | Some c ->
+            (match expand_key flags.modulo_delta curenv sigma l2 cf2 with
+            | Some c_l2 ->
                 unirec_rec curenvnb pb opt substn cM
-                  (whd_betaiotazeta curenv sigma (mkApp(c,l2)))
+                  (whd_betaiotazeta curenv sigma (mkApp c_l2))
             | None ->
-                (match expand_key flags.modulo_delta curenv sigma cf1 with
-                | Some c ->
+                (match expand_key flags.modulo_delta curenv sigma l1 cf1 with
+                | Some c_l1 ->
                     unirec_rec curenvnb pb opt substn
-                      (whd_betaiotazeta curenv sigma (mkApp(c,l1))) cN
+                      (whd_betaiotazeta curenv sigma (mkApp c_l1)) cN
                 | None ->
                     error_cannot_unify curenv sigma (cM,cN)))
 
@@ -1331,7 +1386,7 @@ let applyHead env evd c cl =
 
 let is_mimick_head sigma ts f =
   match EConstr.kind sigma f with
-  | Const (c,u) -> not (TransparentState.is_transparent_constant ts c)
+  | Const (c,u) -> not (Structures.PrimitiveProjections.is_transparent_constant ts c)
   | Var id -> not (TransparentState.is_transparent_variable ts id)
   | (Rel _|Construct _|Ind _) -> true
   | _ -> false
@@ -1655,45 +1710,47 @@ let make_pattern_test from_prefix_of_ind is_correct_type env sigma (pending,c) =
     else default_matching_flags (Option.default Evd.empty pending) in
   let n = Array.length (snd (decompose_app sigma c)) in
   let cgnd = if occur_meta_or_undefined_evar sigma c then NotGround else Ground in
+  let exception NotUnifiable in
   let matching_fun _ t =
     (* make_pattern_test is only ever called with an empty rel context *)
-    if not (EConstr.Vars.closed0 sigma t) then raise (NotUnifiable None);
-    try
+    if not (EConstr.Vars.closed0 sigma t) then Result.Error ()
+    else try
       let t',l2 =
         if from_prefix_of_ind then
           (* We check for fully applied subterms of the form "u u1 .. un" *)
           (* of inductive type knowing only a prefix "u u1 .. ui" *)
           let t,l = decompose_app_list sigma t in
           let l1,l2 =
-            try List.chop n l with Failure _ -> raise (NotUnifiable None) in
-          if not (List.for_all (fun c -> Vars.closed0 sigma c) l2) then raise (NotUnifiable None)
-          else
-            applist (t,l1), l2
+            try List.chop n l with Failure _ -> raise NotUnifiable in
+          if not (List.for_all (fun c -> Vars.closed0 sigma c) l2) then raise NotUnifiable
+          else applist (t,l1), l2
         else t, [] in
       let sigma = w_typed_unify env sigma Conversion.CONV flags (c, cgnd) (t', Unknown) in
       let ty = Retyping.get_type_of env sigma t in
-      if not (is_correct_type ty) then raise (NotUnifiable None);
-      Some(sigma, t, l2)
+      if is_correct_type ty then Result.Ok (sigma, t, l2)
+      else Result.Error ()
     with
     | PretypeError (_,_,CannotUnify (c1,c2,Some e)) ->
-        raise (NotUnifiable (Some (c1,c2,e)))
+      Result.Error ()
+    | NotUnifiable -> Result.Error ()
     (* MS: This is pretty bad, it catches Not_found for example *)
-    | e when CErrors.noncritical e -> raise (NotUnifiable None) in
-  let merge_fun c1 c2 =
-    match c1, c2 with
-    | Some (_,c1,x), Some (evd,c2,_) ->
-      begin match infer_conv ~pb:CONV env evd c1 c2 with
-      | Some evd ->
-       (let t1 = get_type_of env evd c1 in
-        let t2 = get_type_of env evd c2 in
-        match infer_conv ~pb:CONV env evd t1 t2 with
-        | Some evd -> Some (evd, c1, x)
-        | None -> raise (NotUnifiable None))
-      | None -> raise (NotUnifiable None)
+    | e when CErrors.noncritical e -> Result.Error ()
+  in
+  let merge_fun c1 c2 = match c2 with
+  | Some (evd, c2, _) ->
+    let (_, c1, x) = c1 in
+    begin match infer_conv ~pb:CONV env evd c1 c2 with
+    | Some evd ->
+      let t1 = get_type_of env evd c1 in
+      let t2 = get_type_of env evd c2 in
+      begin match infer_conv ~pb:CONV env evd t1 t2 with
+      | Some evd -> Result.Ok (Some (evd, c1, x))
+      | None -> Result.Error ()
       end
-    | Some _, None -> c1
-    | None, Some _ -> c2
-    | None, None -> None in
+    | None -> Result.Error ()
+    end
+  | None -> Result.Ok (Some c1)
+  in
   { match_fun = matching_fun; merge_fun = merge_fun;
     testing_state = None; last_found = None },
   (fun test -> match test.testing_state with
@@ -1779,7 +1836,7 @@ let make_abstraction_core name (test,out) env sigma c ty occs check_occs concl =
 type prefix_of_inductive_support_flag = bool
 
 type abstraction_request =
-| AbstractPattern of prefix_of_inductive_support_flag * (types -> bool) * Name.t * (evar_map option * constr) * clause * bool
+| AbstractPattern of prefix_of_inductive_support_flag * (types -> bool) * Name.t * (evar_map option * constr) * clause
 | AbstractExact of Name.t * constr * types option * clause * bool
 
 type 'r abstraction_result =
@@ -1789,10 +1846,10 @@ type 'r abstraction_result =
 
 let make_abstraction env evd ccl abs =
   match abs with
-  | AbstractPattern (from_prefix,check,name,c,occs,check_occs) ->
+  | AbstractPattern (from_prefix,check,name,c,occs) ->
       make_abstraction_core name
         (make_pattern_test from_prefix check env evd c)
-        env evd (snd c) None occs check_occs ccl
+        env evd (snd c) None occs false ccl
   | AbstractExact (name,c,ty,occs,check_occs) ->
       make_abstraction_core name
         (make_eq_test env evd c)
@@ -1805,7 +1862,7 @@ let keyed_unify env evd kop =
     | None -> fun _ -> true
     | Some kop ->
       fun cl ->
-        let kc = Keys.constr_key (fun c -> EConstr.kind evd c) cl in
+        let kc = Keys.constr_key env (fun c -> EConstr.kind evd c) cl in
           match kc with
           | None -> false
           | Some kc -> Keys.equiv_keys kop kc
@@ -1941,7 +1998,7 @@ end
    Fails if no match is found *)
 let w_unify_to_subterm env evd ?(flags=default_unify_flags ()) (op,cl) =
   let bestexn = ref None in
-  let kop = Keys.constr_key (fun c -> EConstr.kind evd c) op in
+  let kop = Keys.constr_key env (fun c -> EConstr.kind evd c) op in
   let opgnd = if occur_meta_or_undefined_evar evd op then NotGround else Ground in
   let rec matchrec cl =
     let rec strip_outer_cast c = match AConstr.kind c with

@@ -15,7 +15,7 @@ open Names
 open Pp
 open Tacexpr
 
-let (ltac_trace_info : ltac_stack Exninfo.t) = Exninfo.make ()
+let (ltac_trace_info : ltac_stack Exninfo.t) = Exninfo.make "ltac_trace"
 
 let prtac x =
   let env = Global.env () in
@@ -316,9 +316,10 @@ let defer_output = Comm.defer_output
 
 let db_pr_goal gl =
   let env = Proofview.Goal.env gl in
+  let sigma = Tacmach.project gl in
   let concl = Proofview.Goal.concl gl in
-  let penv = Termops.Internal.print_named_context env in
-  let pc = Printer.pr_econstr_env env (Tacmach.project gl) concl in
+  let penv = Termops.Internal.print_named_context env sigma in
+  let pc = Printer.pr_econstr_env env sigma concl in
     str"  " ++ hv 0 (penv ++ fnl () ++
                    str "============================" ++ fnl ()  ++
                    str" "  ++ pc) ++ fnl () ++ fnl ()

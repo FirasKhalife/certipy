@@ -37,7 +37,7 @@ variables:
   # echo $(md5sum dev/ci/docker/old_ubuntu_lts/Dockerfile | head -c 10)
   # echo $(md5sum dev/ci/docker/edge_ubuntu/Dockerfile | head -c 10)
   BASE_CACHEKEY: "old_ubuntu_lts-V2024-01-08-011994e15c"
-  EDGE_CACHEKEY: "edge_ubuntu-V2024-01-08-6b5ac95a11"
+  EDGE_CACHEKEY: "edge_ubuntu-V2024-02-08-3ed9c93d7c"
   BASE_IMAGE: "$CI_REGISTRY_IMAGE:$BASE_CACHEKEY"
   EDGE_IMAGE: "$CI_REGISTRY_IMAGE:$EDGE_CACHEKEY"
 
@@ -644,6 +644,9 @@ library:ci-cross_crypto:
 library:ci-engine_bench:
   extends: .ci-template
 
+library:ci-ext_lib:
+  extends: .ci-template-flambda
+
 library:ci-fcsl_pcm:
   extends: .ci-template-flambda
   needs:
@@ -750,19 +753,19 @@ library:ci-finmap:
   extends: .ci-template-flambda
   needs:
   - build:edge+flambda
-  - library:ci-mathcomp_1
+  - library:ci-mathcomp
 
 library:ci-bigenough:
   extends: .ci-template-flambda
   needs:
   - build:edge+flambda
-  - library:ci-mathcomp_1
+  - library:ci-mathcomp
 
 library:ci-analysis:
   extends: .ci-template-flambda
   needs:
   - build:edge+flambda
-  - library:ci-mathcomp_1
+  - library:ci-mathcomp
   - library:ci-finmap
   - library:ci-bigenough
   - plugin:ci-elpi_hb  # for Hierarchy Builder
@@ -777,7 +780,21 @@ library:ci-itree:
   extends: .ci-template-flambda
   needs:
     - build:edge+flambda
+    - library:ci-ext_lib
     - library:ci-paco
+
+library:ci-itree_io:
+  extends: .ci-template-flambda
+  needs:
+    - build:edge+flambda
+    - library:ci-simple_io
+    - library:ci-itree
+
+library:ci-simple_io:
+  extends: .ci-template-flambda
+  needs:
+    - build:edge+flambda
+    - library:ci-ext_lib
 
 library:ci-sf:
   extends: .ci-template
@@ -837,8 +854,14 @@ library:ci-http:
   needs:
   - build:edge+flambda
   - library:ci-menhir
-  - library:ci-itree
+  - library:ci-itree_io
   - plugin:ci-quickchick
+
+library:ci-trakt:
+  extends: .ci-template-flambda
+  needs:
+  - build:edge+flambda
+  - plugin:ci-elpi_hb
 
 # Plugins are by definition the projects that depend on Coq's ML API
 
@@ -846,6 +869,9 @@ plugin:ci-aac_tactics:
   extends: .ci-template-flambda
 
 plugin:ci-atbr:
+  extends: .ci-template-flambda
+
+plugin:ci-autosubst_ocaml:
   extends: .ci-template-flambda
 
 plugin:ci-itauto:
@@ -926,6 +952,8 @@ plugin:ci-quickchick:
   extends: .ci-template-flambda
   needs:
   - build:edge+flambda
+  - library:ci-ext_lib
+  - library:ci-simple_io
   - library:ci-mathcomp_1
 
 plugin:ci-quickchick_test:

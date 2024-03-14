@@ -78,7 +78,8 @@ let init_gc () =
 let init_ocaml () =
   CProfile.init_profile ();
   init_gc ();
-  Sys.catch_break false (* Ctrl-C is fatal during the initialisation *)
+  (* Get error message (and backtrace if enabled) on Ctrl-C instead of just exiting the process *)
+  Sys.catch_break true
 
 let init_coqlib opts = match opts.Coqargs.config.Coqargs.coqlib with
   | None -> ()
@@ -164,10 +165,14 @@ let init_runtime opts =
   Global.set_check_universes (not opts.config.logic.type_in_type);
   Global.set_VM opts.config.enable_VM;
   Global.set_native_compiler (match opts.config.native_compiler with NativeOff -> false | NativeOn _ -> true);
+  Global.set_rewrite_rules_allowed opts.config.logic.rewrite_rules;
 
   (* Native output dir *)
   Nativelib.output_dir := opts.config.native_output_dir;
   Nativelib.include_dirs := opts.config.native_include_dirs;
+
+  (* Default output dir *)
+  Flags.output_directory := opts.config.output_directory;
 
   (* Paths for loading stuff *)
   init_load_paths opts;

@@ -91,7 +91,7 @@ val compare : t -> t -> int
 val print : t -> Pp.t
 
 (** Return the form of the component of a canonical structure *)
-val of_constr : Environ.env -> Constr.t -> t * int option * Constr.t list
+val of_constr : Evd.evar_map -> EConstr.t -> t * int option * EConstr.t list
 
 end
 
@@ -163,4 +163,5 @@ val find_opt : Names.Constant.t -> Names.Projection.Repr.t option
 val find_opt_with_relevance : Names.Constant.t * EConstr.EInstance.t
   -> (Names.Projection.Repr.t * Sorts.relevance) option
 
+val is_transparent_constant : TransparentState.t -> Names.Constant.t -> bool
 end

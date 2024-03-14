@@ -365,6 +365,9 @@ sig
 
   module SyntacticOrd : EqType with type t = t
   (** Equality functions using both names, for low-level uses. *)
+
+  val canonize : t -> t
+  (** Returns the canonical version of the name *)
 end
 
 (** {6 Constant Names } *)
@@ -382,7 +385,7 @@ sig
   (** Special case of [make] where the user name is canonical.  *)
 
   val make2 : ModPath.t -> Label.t -> t
-  (** Shortcut for [(make1 (KerName.make2 ...))] *)
+  (** Shortcut for [(make1 (KerName.make ...))] *)
 
   (** Projections *)
 
@@ -453,7 +456,7 @@ sig
   (** Special case of [make] where the user name is canonical.  *)
 
   val make2 : ModPath.t -> Label.t -> t
-  (** Shortcut for [(make1 (KerName.make2 ...))] *)
+  (** Shortcut for [(make1 (KerName.make ...))] *)
 
   (** Projections *)
 
@@ -643,7 +646,19 @@ module Projection : sig
   val print : t -> Pp.t
   (** Print internal representation (not to be used for user-facing messages). *)
 
+  val debug_to_string : t -> string
+  (** Same as [to_string], but outputs extra information related to debug. *)
+
+  val debug_print : t -> Pp.t
+  (** Same as [print], but outputs extra information related to debug. *)
+
 end
+
+module PRset : CSig.SetS with type elt = Projection.Repr.t
+module PRmap : Map.ExtS with type key = Projection.Repr.t and module Set := PRset
+
+(** Predicate on projection representation (ignoring unfolding state) *)
+module PRpred : Predicate.S with type elt = Projection.Repr.t
 
 (** {6 Global reference is a kernel side type for all references together } *)
 
@@ -682,3 +697,17 @@ type lname = Name.t CAst.t
 type lstring = string CAst.t
 
 val lident_eq : lident -> lident -> bool
+
+(** Evaluable references (whose transparency can be controlled) *)
+
+module Evaluable : sig
+  type t =
+    | EvalVarRef of Id.t
+    | EvalConstRef of Constant.t
+    | EvalProjectionRef of Projection.Repr.t
+
+  val map : (Id.t -> Id.t) -> (Constant.t -> Constant.t) ->
+    (Projection.Repr.t -> Projection.Repr.t) -> t -> t
+
+  val equal : t -> t -> bool
+end

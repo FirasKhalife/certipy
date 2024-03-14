@@ -282,6 +282,17 @@ let warn_cannot_define_projection =
   CWarnings.create ~name:"cannot-define-projection" ~category:CWarnings.CoreCategories.records
          (fun msg -> hov 0 msg)
 
+type arity_error =
+  | NonInformativeToInformative
+  | StrongEliminationOnNonSmallType
+
+let error_elim_explain kp ki =
+  let open Sorts in
+  match kp,ki with
+  | (InType | InSet), InProp -> Some NonInformativeToInformative
+  | InType, InSet -> Some StrongEliminationOnNonSmallType (* if Set impredicative *)
+  | _ -> None
+
 (* If a projection is not definable, we throw an error if the user
 asked it to be a coercion or instance. Otherwise, we just print an info
 message. The user might still want to name the field of the record. *)
@@ -293,26 +304,28 @@ let warning_or_error ~info flags indsp err =
            strbrk" cannot be defined because the projection" ++ str s ++ spc () ++
            prlist_with_sep pr_comma Id.print projs ++ spc () ++ str have ++
            strbrk " not defined.")
-    | BadTypedProj (fi,_ctx,te) ->
+    | BadTypedProj (fi,env,te) ->
       let err = match te with
-        | ElimArity (_, _, Some (_, s)) ->
-          Himsg.error_elim_explain (Sorts.family s)
+        | ElimArity (_, _, Some s) ->
+          error_elim_explain (Sorts.family s)
             (Inductiveops.elim_sort (Global.lookup_inductive indsp))
-        | _ -> WrongArity
+        | _ -> None
       in
         match err with
-          | NonInformativeToInformative ->
+          | Some NonInformativeToInformative ->
               (Id.print fi ++
                 strbrk" cannot be defined because it is informative and " ++
                 Printer.pr_inductive (Global.env()) indsp ++
                 strbrk " is not.")
-          | StrongEliminationOnNonSmallType ->
+          | Some StrongEliminationOnNonSmallType ->
               (Id.print fi ++
                 strbrk" cannot be defined because it is large and " ++
                 Printer.pr_inductive (Global.env()) indsp ++
                 strbrk " is not.")
-          | WrongArity ->
-              (Id.print fi ++ strbrk " cannot be defined because it is not typable.")
+          | None ->
+            (Id.print fi ++ str " cannot be defined because it is not typable:" ++ spc() ++
+             Himsg.explain_type_error env (Evd.from_env env)
+               (Type_errors.map_ptype_error EConstr.of_constr te))
   in
   if flags.Data.pf_coercion || flags.Data.pf_instance then user_err ~info st;
   warn_cannot_define_projection (hov 0 st)
@@ -401,7 +414,7 @@ let build_named_proj ~primitive ~flags ~poly ~univs ~uinstance ~kind env paramde
       if primitive then
         let p = Projection.Repr.make indsp
             ~proj_npars:mib.mind_nparams ~proj_arg:i (Label.of_id fid) in
-        mkProj (Projection.make p true, rci, mkRel 1), Some (p,rci)
+        mkProj (Projection.make p false, rci, mkRel 1), Some (p,rci)
       else
         let ccl' = liftn 1 2 ccl in
         let p = mkLambda (x, lift 1 rp, ccl') in
@@ -543,11 +556,6 @@ let bound_names_rdata { DataR.fields; _ } : Id.Set.t =
   let add_names names field = add_bound_names_constr names (RelDecl.get_type field) in
   List.fold_left add_names Id.Set.empty fields
 
-(** Pick a variable name for a record, avoiding names bound in its fields. *)
-let data_name id rdata =
-  let name = Id.of_string (Unicode.lowercase_first_char (Id.to_string id)) in
-  Namegen.next_ident_away name (bound_names_rdata rdata)
-
 (** Main record declaration part:
 
    The entry point is [definition_structure], which will match on the
@@ -622,6 +630,11 @@ let kind_class =
   let open Vernacexpr in
   function Class true -> DefClass | Class false -> RecordClass
   | Inductive_kw | CoInductive | Variant | Record | Structure -> NotClass
+
+(** Pick a variable name for a record, avoiding names bound in its fields. *)
+let canonical_inhabitant_id ~isclass ind_id =
+  if isclass then ind_id
+  else Id.of_string (Unicode.lowercase_first_char (Id.to_string ind_id))
 
 let check_priorities kind records =
   let open Vernacexpr in
@@ -731,10 +744,11 @@ let pre_process_structure ?(definitional=false) udecl kind ~poly (records : Ast.
   let map rdata { Ast.name; is_coercion; cfs; idbuild; default_inhabitant_id; _ } =
     let proj_flags = List.map (fun (_, rf) -> check_proj_flags kind rf) cfs in
     let inhabitant_id =
-      match default_inhabitant_id, kind_class kind with
-      | None, NotClass -> data_name name.CAst.v rdata
-      | None, _ -> Namegen.next_ident_away name.CAst.v (Termops.vars_of_env (Global.env()))
-      | Some n, _ -> n
+      match default_inhabitant_id with
+      | Some n -> n
+      | None ->
+        let canonical_inhabitant_id = canonical_inhabitant_id ~isclass:(kind_class kind != NotClass) name.CAst.v in
+        Namegen.next_ident_away canonical_inhabitant_id (bound_names_rdata rdata)
     in
     let is_coercion = match is_coercion with AddCoercion -> true | NoCoercion -> false in
     if kind_class kind <> NotClass then begin
@@ -829,7 +843,7 @@ let declare_structure { Record_decl.mie; primitive_proj; impls; globnames; globa
     let cstr = (rsp, 1) in
     let projections = declare_projections rsp (projunivs,ubinders) ~kind:projections_kind inhabitant_id proj_flags implfs fields in
     let build = GlobRef.ConstructRef cstr in
-    let () = if is_coercion then ComCoercion.try_add_new_coercion build ~local:false ~reversible:true in
+    let () = if is_coercion then ComCoercion.try_add_new_coercion build ~local:false ~reversible:false in
     let struc = Structure.make (Global.env ()) rsp projections in
     let () = declare_structure_entry struc in
     GlobRef.IndRef rsp
@@ -881,7 +895,7 @@ let declare_class_constant ~univs paramimpls params data =
   Impargs.declare_manual_implicits false cref paramimpls;
   Impargs.declare_manual_implicits false (GlobRef.ConstRef proj_cst) (List.hd implfs);
   Classes.set_typeclass_transparency ~locality:Hints.SuperGlobal
-    [Tacred.EvalConstRef cst] false;
+    [Evaluable.EvalConstRef cst] false;
   let () =
     declare_proj_coercion_instance ~flags:proj_flags (GlobRef.ConstRef proj_cst) cref ~with_coercion:false in
   let m = {
@@ -976,7 +990,7 @@ let add_constant_class cst =
   in
   Classes.add_class tc;
   Classes.set_typeclass_transparency ~locality:Hints.SuperGlobal
-    [Tacred.EvalConstRef cst] false
+    [Evaluable.EvalConstRef cst] false
 
 let add_inductive_class ind =
   let env = Global.env () in

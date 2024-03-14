@@ -27,7 +27,7 @@ val require_library_from_dirpath : library_t list -> unit
 
 val require_library_syntax_from_dirpath
   :  lib_resolver:(DirPath.t -> CUnix.physical_path)
-  -> DirPath.t list
+  -> DirPath.t Loc.located list
   -> library_t list
 
 (** {6 Start the compilation of a library } *)
@@ -38,6 +38,7 @@ type seg_lib
 type seg_univ = (* all_cst, finished? *)
   Univ.ContextSet.t * bool
 type seg_proofs = Opaques.opaque_disk
+type seg_vm = Vmlibrary.compiled_library
 
 (** End the compilation of a library and save it to a ".vo" file,
     a ".vio" file, or a ".vos" file, depending on the todo_proofs
@@ -58,9 +59,9 @@ val save_library_to :
 
 val load_library_todo
   :  CUnix.physical_path
-  -> seg_sum * seg_lib * seg_univ * (Opaqueproof.opaque_handle option, 'doc) tasks * seg_proofs
+  -> seg_sum * seg_lib * seg_univ * (Opaqueproof.opaque_handle option, 'doc) tasks * seg_proofs * seg_vm
 
-val save_library_raw : string -> seg_sum -> seg_lib -> seg_univ -> seg_proofs -> unit
+val save_library_raw : string -> seg_sum -> seg_lib -> seg_univ -> seg_proofs -> seg_vm -> unit
 
 (** {6 Interrogate the status of libraries } *)
 

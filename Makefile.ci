@@ -15,6 +15,7 @@ CI_TARGETS= \
     ci-async_test \
     ci-atbr \
     ci-autosubst \
+    ci-autosubst_ocaml \
     ci-bbv \
     ci-bedrock2 \
     ci-bignums \
@@ -91,6 +92,7 @@ CI_TARGETS= \
     ci-stdlib2 \
     ci-tactician \
     ci-tlc \
+    ci-trakt \
     ci-unimath \
     ci-unicoq \
     ci-verdi_raft \
@@ -135,14 +137,16 @@ ci-fcsl_pcm: ci-mathcomp_1
 ci-mczify: ci-mathcomp
 ci-mathcomp_test: ci-mathcomp
 ci-mathcomp_word: ci-mathcomp_1
-ci-finmap: ci-mathcomp_1
-ci-bigenough: ci-mathcomp_1
+ci-finmap: ci-mathcomp
+ci-bigenough: ci-mathcomp
 ci-analysis: ci-elpi_hb ci-finmap ci-bigenough
 
 ci-hb: ci-elpi
 
 ci-elpi_test: ci-elpi_hb
 ci-hb_test: ci-elpi_hb
+
+ci-trakt: ci-elpi
 
 ci-jasmin: ci-mathcomp_word
 

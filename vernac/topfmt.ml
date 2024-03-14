@@ -83,7 +83,11 @@ let get_depth_boxes () = Some (Format.pp_get_max_boxes !std_ft ())
 let set_depth_boxes v =
   Format.pp_set_max_boxes !std_ft (match v with None -> default | Some v -> v)
 
-let get_margin () = Some (Format.pp_get_margin !std_ft ())
+let get_margin0 () = Format.pp_get_margin !std_ft ()
+
+let () = Profile_tactic.set_get_printing_width get_margin0
+
+let get_margin () = Some (get_margin0())
 let set_margin v =
   let v = match v with None -> default_margin | Some v -> v in
   Format.pp_set_margin Format.str_formatter v;
@@ -401,7 +405,10 @@ let print_err_exn any =
   std_logger ?pre_hdr Feedback.Error msg
 
 let with_output_to_file fname func input =
-  let channel = open_out (String.concat "." [fname; "out"]) in
+  let fname = String.concat "." [fname; "out"] in
+  let fullfname = System.get_output_path fname in
+  System.mkdir (Filename.dirname fullfname);
+  let channel = open_out fullfname in
   let old_fmt = !std_ft, !err_ft, !deep_ft in
   let new_ft = Format.formatter_of_out_channel channel in
   set_gp new_ft (get_gp !std_ft);

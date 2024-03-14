@@ -60,6 +60,8 @@ module Stack : sig
 
   type case_stk
 
+  val mkCaseStk : case_info * EInstance.t * EConstr.t array * EConstr.t pcase_return * EConstr.t pcase_invert * EConstr.t pcase_branch array -> case_stk
+
   type member =
   | App of app_node
   | Case of case_stk
@@ -233,7 +235,7 @@ val contract_fix : evar_map -> fixpoint -> constr
 val contract_cofix : evar_map -> cofixpoint -> constr
 
 (** {6 Querying the kernel conversion oracle: opaque/transparent constants } *)
-val is_transparent : Environ.env -> Constant.t tableKey -> bool
+val is_transparent : Environ.env -> Evaluable.t -> bool
 
 (** {6 Conversion Functions (uses closures, lazy strategy) } *)
 
@@ -291,6 +293,10 @@ val whd_nored_state : state_reduction_function
 
 val whd_betaiota_deltazeta_for_iota_state :
   TransparentState.t -> state_reduction_function
+
+exception PatternFailure
+val apply_rules : (state -> state) -> env -> evar_map -> EInstance.t ->
+  Declarations.rewrite_rule list -> Stack.t -> econstr * Stack.t
 
 val is_head_evar : env -> evar_map -> constr -> bool
 

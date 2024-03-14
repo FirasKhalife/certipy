@@ -57,9 +57,7 @@ project oddorder "https://github.com/math-comp/odd-order" "master"
 project mczify "https://github.com/math-comp/mczify" "master"
 # Contact @pi8027 on github
 
-project finmap "https://github.com/math-comp/finmap" "cea9f088c9cddea1173bc2f7c4c7ebda35081b60"
-# put back master when Analysis master moves to MathComp 2
-# project finmap "https://github.com/math-comp/finmap" "master"
+project finmap "https://github.com/math-comp/finmap" "master"
 # Contact @CohenCyril on github
 
 project bigenough "https://github.com/math-comp/bigenough" "master"
@@ -448,7 +446,7 @@ project deriving "https://github.com/arthuraa/deriving" "master"
 ########################################################################
 # VsCoq
 ########################################################################
-project vscoq "https://github.com/coq-community/vscoq" "coq-master"
+project vscoq "https://github.com/coq-community/vscoq" "main"
 # Contact @rtetley, @gares on github
 
 ########################################################################
@@ -526,3 +524,15 @@ project ltac2_compiler "https://github.com/SkySkimmer/coq-ltac2-compiler" "main"
 ########################################################################
 project waterproof "https://github.com/impermeable/coq-waterproof" "coq-master"
 # Contact @jellooo038, @jim-portegies on github
+
+########################################################################
+# Autosubst (2) OCaml
+########################################################################
+project autosubst_ocaml "https://github.com/uds-psl/autosubst-ocaml" "master"
+# Contact @yforster on github
+
+########################################################################
+# Trakt
+########################################################################
+project trakt "https://github.com/ecranceMERCE/trakt" "coq-master"
+# Contact @ckeller, @louiseddp on github

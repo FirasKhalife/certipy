@@ -353,7 +353,7 @@ behavior.)
    .. insertprodn toplevel_selector toplevel_selector
 
    .. prodn::
-      toplevel_selector ::= @selector
+      toplevel_selector ::= @goal_selector
       | all
       | !
       | par
@@ -364,10 +364,10 @@ behavior.)
    lowest-numbered selected goal, ordered by goal number.  :ref:`Example
    <reordering_goals_ex>`.  If the selector applies
    to a single goal or to all goals, the reordering will not be apparent.  The order of
-   the goals in the :token:`selector` is irrelevant.  (This may not be what you expect;
+   the goals in the :token:`goal_selector` is irrelevant.  (This may not be what you expect;
    see `#8481 <https://github.com/coq/coq/issues/8481>`_.)
 
-   .. todo why shouldn't "all" and "!" be accepted anywhere a @selector is accepted?
+   .. todo why shouldn't "all" and "!" be accepted anywhere a @goal_selector is accepted?
       It would be simpler to explain.
 
    `all`
@@ -391,18 +391,18 @@ behavior.)
 Selectors can also be used nested within a tactic expression with the
 :tacn:`only` tactic:
 
-.. tacn:: only @selector : @ltac_expr3
+.. tacn:: only @goal_selector : @ltac_expr3
 
-   .. insertprodn selector range_selector
+   .. insertprodn goal_selector range_selector
 
    .. prodn::
-      selector ::= {+, @range_selector }
+      goal_selector ::= {+, @range_selector }
       | [ @ident ]
       range_selector ::= @natural
       | @natural - @natural
 
    Applies :token:`ltac_expr3` to the selected goals.  (At the beginning of a
-   sentence, use the form :n:`@selector: @tactic` rather than :n:`only @selector: @tactic`.
+   sentence, use the form :n:`@goal_selector: @tactic` rather than :n:`only @goal_selector: @tactic`.
    In the latter, the :opt:`Default Goal Selector` (by default set to :n:`1:`)
    is applied before :n:`only` is interpreted.  This is probably not what you
    want.)
@@ -1741,8 +1741,9 @@ amount of time:
 .. tacn:: timeout @nat_or_var @ltac_expr3
 
    :n:`@ltac_expr3` is evaluated to ``v`` which must be a tactic value. The tactic value
-   ``v`` is applied normally, except that it is interrupted after :n:`@nat_or_var` seconds
-   if it is still running. In this case the outcome is a failure.
+   ``v`` is applied but only its first success is used (as with :tacn:`once`),
+   and it is interrupted after :n:`@nat_or_var` seconds if it is still running.
+   If it is interrupted the outcome is a failure.
 
    :tacn:`timeout` is an :token:`l3_tactic`.
 
@@ -1753,8 +1754,7 @@ amount of time:
       may fail on a slow one. The converse is even possible if you combine a
       timeout with some other tacticals. This tactical is hence proposed only
       for convenience during debugging or other development phases, we strongly
-      advise you to not leave any timeout in final scripts. Note also that
-      this tactical isn’t available on the native Windows port of Coq.
+      advise you to not leave any timeout in final scripts.
 
 Timing a tactic
 ~~~~~~~~~~~~~~~

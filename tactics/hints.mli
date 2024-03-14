@@ -37,7 +37,7 @@ type 'a hint_ast =
   | ERes_pf    of 'a (* Hint EApply *)
   | Give_exact of 'a
   | Res_pf_THEN_trivial_fail of 'a (* Hint Immediate *)
-  | Unfold_nth of Tacred.evaluable_global_reference       (* Hint Unfold *)
+  | Unfold_nth of Evaluable.t (* Hint Unfold *)
   | Extern     of Pattern.constr_pattern option * Genarg.glob_generic_argument       (* Hint Extern *)
 
 type hint
@@ -91,17 +91,11 @@ type 'a hints_path_gen =
 type pre_hints_path = Libnames.qualid hints_path_gen
 type hints_path = GlobRef.t hints_path_gen
 
-val normalize_path : hints_path -> hints_path
-val path_matches : hints_path -> hints_path_atom list -> bool
-val path_derivate : hints_path -> hints_path_atom -> hints_path
+val path_matches_epsilon : hints_path -> bool
+val path_derivate : hints_path -> GlobRef.t option -> hints_path
 val pp_hints_path_gen : ('a -> Pp.t) -> 'a hints_path_gen -> Pp.t
-val pp_hints_path_atom : ('a -> Pp.t) -> 'a hints_path_atom_gen -> Pp.t
-val pp_hints_path : hints_path -> Pp.t
 val pp_hint_mode : hint_mode -> Pp.t
-val glob_hints_path_atom :
-  Libnames.qualid hints_path_atom_gen -> GlobRef.t hints_path_atom_gen
-val glob_hints_path :
-  Libnames.qualid hints_path_gen -> GlobRef.t hints_path_gen
+val glob_hints_path : pre_hints_path -> hints_path
 
 type mode_match =
   | NoMode
@@ -149,7 +143,7 @@ module Hint_db :
     val add_cut : hints_path -> t -> t
     val cut : t -> hints_path
 
-    val unfolds : t -> Id.Set.t * Cset.t
+    val unfolds : t -> Id.Set.t * Cset.t * PRset.t
 
     val add_modes : hint_mode array list GlobRef.Map.t -> t -> t
     val modes : t -> hint_mode array list GlobRef.Map.t
@@ -165,8 +159,8 @@ type hints_entry =
   | HintsResolveEntry of (hint_info * hnf * hint_term) list
   | HintsImmediateEntry of hint_term list
   | HintsCutEntry of hints_path
-  | HintsUnfoldEntry of Tacred.evaluable_global_reference list
-  | HintsTransparencyEntry of Tacred.evaluable_global_reference hints_transparency_target * bool
+  | HintsUnfoldEntry of Evaluable.t list
+  | HintsTransparencyEntry of Evaluable.t hints_transparency_target * bool
   | HintsModeEntry of GlobRef.t * hint_mode list
   | HintsExternEntry of hint_info * Genarg.glob_generic_argument
 
@@ -197,7 +191,7 @@ val add_hints : locality:hint_locality -> hint_db_name list -> hints_entry -> un
 val hint_globref : GlobRef.t -> hint_term
 
 val hint_constr : constr * UnivGen.sort_context_set option -> hint_term
-[@ocaml.deprecated "Declare a hint constant instead"]
+[@@ocaml.deprecated "Declare a hint constant instead"]
 
 (** A constr which is Hint'ed will be:
    - (1) used as an Exact, if it does not start with a product

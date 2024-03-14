@@ -207,20 +207,6 @@ type prim_token_infos = {
 
 val enable_prim_token_interpretation : prim_token_infos -> unit
 
-(** Compatibility.
-    Avoid the next two functions, they will now store unnecessary
-    objects in the library segment. Instead, combine
-    [register_*_interpretation] and [enable_prim_token_interpretation]
-    (the latter inside a [Mltop.declare_cache_obj]).
-*)
-
-val declare_numeral_interpreter : ?local:bool -> scope_name -> required_module ->
-  Z.t prim_token_interpreter ->
-  glob_constr list * Z.t prim_token_uninterpreter * bool -> unit
-val declare_string_interpreter : ?local:bool -> scope_name -> required_module ->
-  string prim_token_interpreter ->
-  glob_constr list * string prim_token_uninterpreter * bool -> unit
-
 (** Return the [term]/[cases_pattern] bound to a primitive token in a
    given scope context*)
 
@@ -243,6 +229,8 @@ val availability_of_prim_token :
 
 (** {6 Declare and interpret back and forth a notation } *)
 
+val warning_overridden_name : string
+
 type entry_coercion_kind =
   | IsEntryCoercion of notation_entry_level * notation_entry_relative_level
   | IsEntryGlobal of string * int
@@ -251,7 +239,7 @@ type entry_coercion_kind =
 val declare_notation : notation_with_optional_scope * notation ->
   interpretation -> notation_location -> use:notation_use ->
   entry_coercion_kind option ->
-  Deprecation.t option -> unit
+  UserWarn.t option -> unit
 
 
 (** Return the interpretation bound to a notation *)

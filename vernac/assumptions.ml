@@ -199,7 +199,7 @@ let get_constant_body kn =
   let cb = lookup_constant kn in
   let access = Library.indirect_accessor in
   match cb.const_body with
-  | Undef _ | Primitive _ -> None
+  | Undef _ | Primitive _ | Symbol _ -> None
   | Def c -> Some c
   | OpaqueDef o ->
     match Global.force_proof access o with
@@ -370,7 +370,7 @@ let assumptions ?(add_opaque=false) ?(add_transparent=false) st gr t =
       let t = type_of_constant cb in
       let l = try GlobRef.Map_env.find obj ax2ty with Not_found -> [] in
       ContextObjectMap.add (Axiom (Constant kn,l)) t accu
-    else if add_opaque && (Declareops.is_opaque cb || not (TransparentState.is_transparent_constant st kn)) then
+    else if add_opaque && (Declareops.is_opaque cb || not (Structures.PrimitiveProjections.is_transparent_constant st kn)) then
       let t = type_of_constant cb in
       ContextObjectMap.add (Opaque kn) t accu
     else if add_transparent then

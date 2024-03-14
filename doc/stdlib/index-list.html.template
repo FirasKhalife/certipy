@@ -122,7 +122,6 @@ through the <tt>Require Import</tt> command.</p>
     theories/Arith/Compare.v
     theories/Arith/EqNat.v
     theories/Arith/Euclid.v
-    theories/Arith/Bool_nat.v
     theories/Arith/Factorial.v
     theories/Arith/Wf_nat.v
     theories/Arith/Cantor.v
@@ -182,7 +181,6 @@ through the <tt>Require Import</tt> command.</p>
     theories/ZArith/Zpower.v
     theories/ZArith/Zdiv.v
     theories/ZArith/Zquot.v
-    theories/ZArith/Zeuclid.v
     (theories/ZArith/ZArith.v)
     theories/ZArith/Zgcd_alt.v
     theories/ZArith/Zwf.v
@@ -253,8 +251,6 @@ through the <tt>Require Import</tt> command.</p>
     theories/Numbers/NatInt/NZDiv.v
     theories/Numbers/NatInt/NZMulOrder.v
     theories/Numbers/NatInt/NZOrder.v
-    theories/Numbers/NatInt/NZDomain.v
-    theories/Numbers/NatInt/NZProperties.v
     theories/Numbers/NatInt/NZParity.v
     theories/Numbers/NatInt/NZPow.v
     theories/Numbers/NatInt/NZSqrt.v
@@ -286,8 +282,6 @@ through the <tt>Require Import</tt> command.</p>
     theories/Numbers/Natural/Abstract/NAddOrder.v
     theories/Numbers/Natural/Abstract/NAxioms.v
     theories/Numbers/Natural/Abstract/NBase.v
-    theories/Numbers/Natural/Abstract/NDefOps.v
-    theories/Numbers/Natural/Abstract/NIso.v
     theories/Numbers/Natural/Abstract/NMulOrder.v
     theories/Numbers/Natural/Abstract/NOrder.v
     theories/Numbers/Natural/Abstract/NStrongRec.v
@@ -326,7 +320,6 @@ through the <tt>Require Import</tt> command.</p>
     theories/Numbers/Integer/Abstract/ZLcm.v
     theories/Numbers/Integer/Abstract/ZBits.v
     theories/Numbers/Integer/Abstract/ZProperties.v
-    theories/Numbers/Integer/Abstract/ZDivEucl.v
     theories/Numbers/Integer/Abstract/ZDivFloor.v
     theories/Numbers/Integer/Abstract/ZDivTrunc.v
     </dd>
@@ -715,6 +708,7 @@ through the <tt>Require Import</tt> command.</p>
     theories/Compat/Coq819.v
     theories/Compat/Coq820.v
     user-contrib/Ltac2/Compat/Coq818.v
+    user-contrib/Ltac2/Compat/Coq819.v
   </dd>
 
   <dt> <b>Array</b>:

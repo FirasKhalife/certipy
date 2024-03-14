@@ -1383,7 +1383,7 @@ let intern_qualid_for_pattern test_global intern_not qid pats =
   match Nametab.locate_extended_nowarn qid with
   | TrueGlobal g as xref ->
     test_global g;
-    Nametab.is_deprecated_xref xref |> Option.iter (fun depr -> Nametab.warn_deprecated_xref ?loc:qid.loc depr (TrueGlobal g));
+    Nametab.is_warned_xref xref |> Option.iter (fun warn -> Nametab.warn_user_warn_xref ?loc:qid.loc warn (TrueGlobal g));
     dump_extended_global qid.loc (TrueGlobal g);
     (g, false, Some [], pats)
   | Abbrev kn as xref ->
@@ -1410,8 +1410,8 @@ let intern_qualid_for_pattern test_global intern_not qid pats =
       | _ -> None in
     match Abbreviation.search_filtered_abbreviation filter kn with
     | Some (g, pats1, pats2) ->
-      Nametab.is_deprecated_xref xref
-      |> Option.iter (fun depr -> Nametab.warn_deprecated_xref ?loc:qid.loc depr (Abbrev kn));
+      Nametab.is_warned_xref xref
+      |> Option.iter (fun warn -> Nametab.warn_user_warn_xref ?loc:qid.loc warn (Abbrev kn));
       dump_extended_global qid.loc (Abbrev kn);
       (g, true, pats1, pats2)
     | None -> raise Not_found
@@ -2771,12 +2771,12 @@ let interp_type_evars ?program_mode env sigma ?(impls=empty_internalization_env)
 let intern_constr_pattern env sigma ?(as_type=false) ?strict_check ?(ltacvars=empty_ltac_sign) c =
   let c = intern_gen (if as_type then IsType else WithoutTypeConstraint)
             ?strict_check ~pattern_mode:true ~ltacvars env sigma c in
-  pattern_of_glob_constr c
+  pattern_of_glob_constr env c
 
 let intern_uninstantiated_constr_pattern env sigma ?(as_type=false) ?strict_check ?(ltacvars=empty_ltac_sign) c =
   let c = intern_gen (if as_type then IsType else WithoutTypeConstraint)
             ?strict_check ~pattern_mode:true ~ltacvars env sigma c in
-  uninstantiated_pattern_of_glob_constr c
+  uninstantiated_pattern_of_glob_constr env c
 
 let intern_core kind env sigma ?strict_check ?(pattern_mode=false) ?(ltacvars=empty_ltac_sign)
       { Genintern.intern_ids = ids; Genintern.notation_variable_status = vl } c =

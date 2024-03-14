@@ -38,6 +38,8 @@ val set_check_universes : bool -> unit
 val typing_flags : unit -> typing_flags
 val set_allow_sprop : bool -> unit
 val sprop_allowed : unit -> bool
+val set_rewrite_rules_allowed : bool -> unit
+val rewrite_rules_allowed : unit -> bool
 
 (** Variables, Local definitions, constants, inductive types *)
 
@@ -55,6 +57,7 @@ val add_constant :
 val fill_opaque : Safe_typing.opaque_certificate -> unit
 val add_private_constant :
   Id.t -> Univ.ContextSet.t -> Safe_typing.side_effect_declaration -> Constant.t * Safe_typing.private_constants
+val add_rewrite_rules : Id.t -> rewrite_rules_body -> unit
 val add_mind :
   ?typing_flags:typing_flags ->
   Id.t -> Entries.mutual_inductive_entry -> MutInd.t
@@ -139,9 +142,9 @@ val body_of_constant_body : indirect_accessor ->
 
 val start_library : DirPath.t -> ModPath.t
 val export : output_native_objects:bool -> DirPath.t ->
-  ModPath.t * Safe_typing.compiled_library * Nativelib.native_library
+  ModPath.t * Safe_typing.compiled_library * Vmlibrary.compiled_library * Nativelib.native_library
 val import :
-  Safe_typing.compiled_library -> Univ.ContextSet.t -> Safe_typing.vodigest ->
+  Safe_typing.compiled_library -> Univ.ContextSet.t -> Vmlibrary.on_disk -> Safe_typing.vodigest ->
   ModPath.t
 
 (** {6 Misc } *)
@@ -166,7 +169,7 @@ val register_inductive : inductive -> 'a CPrimitives.prim_ind -> unit
 
 (** {6 Oracle } *)
 
-val set_strategy : Constant.t Names.tableKey -> Conv_oracle.level -> unit
+val set_strategy : Evaluable.t -> Conv_oracle.level -> unit
 
 (** {6 Conversion settings } *)
 

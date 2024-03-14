@@ -17,7 +17,7 @@ val do_fixpoint :
   -> ?clearbody:bool
   -> poly:bool
   -> ?typing_flags:Declarations.typing_flags
-  -> ?deprecation:Deprecation.t
+  -> ?user_warns:UserWarn.t
   -> ?using:Vernacexpr.section_subset_expr
   -> fixpoint_expr list
   -> Declare.OblState.t
@@ -25,8 +25,10 @@ val do_fixpoint :
 val do_cofixpoint :
      pm:Declare.OblState.t
   -> scope:Locality.definition_scope
+  -> ?clearbody:bool
   -> poly:bool
-  -> ?deprecation:Deprecation.t
+  -> ?typing_flags:Declarations.typing_flags
+  -> ?user_warns:UserWarn.t
   -> ?using:Vernacexpr.section_subset_expr
   -> cofixpoint_expr list
   -> Declare.OblState.t

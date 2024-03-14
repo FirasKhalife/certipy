@@ -180,11 +180,14 @@ and commands:
 
 .. flag:: Extraction AutoInline
 
-   Default is on. The extraction mechanism inlines the :term:`bodies <body>` of
+   Default is off. When enabled, the extraction mechanism inlines the :term:`bodies <body>` of
    some defined :term:`constants <constant>`, according to some heuristics
    like size of bodies, uselessness of some arguments, etc.
-   Those heuristics are not always perfect; if you want to disable
-   this feature, turn this :term:`flag` off.
+
+   Even when this flag is off, recursors (`_rect` and `_rec` schemes, such as `nat_rect`), projections, and a few
+   specific constants such as `andb` and `orb` (for the lazy
+   behaviour) and well founded recursion combinators are still
+   automatically inlined.
 
 .. cmd:: Extraction Inline {+ @qualid }
 
@@ -487,8 +490,10 @@ Additional settings
 
 .. opt:: Extraction Output Directory @string
 
-   Sets the directory where extracted files will be written.
-   The default is the current directory, which can be displayed with :cmd:`Pwd`.
+   Sets the directory where extracted files will be written. If not set,
+   files will be written to the directory specified by the command line
+   option :n:`-output-directory`, if set (see :ref:`command-line-options`) and
+   otherwise, the current directory.  Use :cmd:`Pwd` to display the current directory.
 
 Differences between Coq and ML type systems
 ----------------------------------------------

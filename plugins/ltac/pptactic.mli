@@ -106,7 +106,7 @@ val pr_may_eval :
 
 val pr_and_short_name : ('a -> Pp.t) -> 'a Genredexpr.and_short_name -> Pp.t
 
-val pr_evaluable_reference_env : env -> Tacred.evaluable_global_reference -> Pp.t
+val pr_evaluable_reference_env : env -> Names.Evaluable.t -> Pp.t
 
 val pr_quantified_hypothesis : quantified_hypothesis -> Pp.t
 
@@ -155,6 +155,8 @@ val pr_match_rule : bool -> ('a -> Pp.t) -> ('b -> Pp.t) ->
   ('b, 'a) match_rule -> Pp.t
 
 val pr_value : entry_relative_level -> Val.t -> Pp.t
+
+val pp_ltac_call_kind : ltac_call_kind -> Pp.t
 
 val ltop : entry_relative_level
 

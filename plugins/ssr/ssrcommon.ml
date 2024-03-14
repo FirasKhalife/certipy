@@ -175,6 +175,8 @@ let interp_refine env sigma ist ~concl rc =
     expand_evars = true;
     program_mode = false;
     polymorphic = false;
+    undeclared_evars_patvars = false;
+    patvars_abstract = false;
   }
   in
   let sigma, c = Pretyping.understand_ltac flags env sigma vars kind rc in
@@ -1306,7 +1308,7 @@ let tclOPTION o d =
 let tacIS_INJECTION_CASE ?ty t = begin
   tclOPTION ty (tacTYPEOF t) >>= fun ty ->
   tacEVAL_TO_QUANTIFIED_IND ty >>= fun (mind,_) ->
-  tclUNIT (Coqlib.check_ind_ref "core.eq.type" mind)
+  tclUNIT (Coqlib.check_ref "core.eq.type" (GlobRef.IndRef mind))
 end
 
 let tclWITHTOP tac = Goal.enter begin fun gl ->
@@ -1350,12 +1352,13 @@ let unprotecttac =
 module type StateType = sig
   type state
   val init : state
+  val name : string
 end
 
 module MakeState(S : StateType) = struct
 
 let state_field : S.state Proofview_monad.StateStore.field =
-  Proofview_monad.StateStore.field ()
+  Proofview_monad.StateStore.field S.name
 
 (* FIXME: should not inject fresh_state, but initialize it at the beginning *)
 let lift_upd_state upd s =

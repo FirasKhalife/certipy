@@ -189,7 +189,7 @@ described elsewhere
 
       .. prodn::
          logical_kind ::= {| @thm_token | @assumption_token }
-         | {| Definition | Example | Context | Primitive }
+         | {| Definition | Example | Context | Primitive | Symbol }
          | {| Coercion | Instance | Scheme | Canonical | SubClass }
          | {| Field | Method }
 
@@ -865,6 +865,10 @@ Quitting and debugging
    Executes :n:`@sentence`, redirecting its
    output to the file ":n:`@string`.out".
 
+   If :n:`@string` is a relative filename, it refers to the directory
+   specified by the command line option `-output-directory`, if set
+   (see :ref:`command-line-options`) and otherwise, the current
+   directory. Use :cmd:`Pwd` to display the current directory.
 
 .. cmd:: Timeout @natural @sentence
 
@@ -952,6 +956,7 @@ Controlling display
    `ssr`,
    `syntax`,
    `tactics`,
+   `user-warn`,
    `vernacular`.
 
    .. This list is from lib/cWarnings.ml

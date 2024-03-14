@@ -454,6 +454,7 @@ sig
   module CanOrd : EqType with type t = t
   module UserOrd : EqType with type t = t
   module SyntacticOrd : EqType with type t = t
+  val canonize : t -> t
 end
 
 (** For constant and inductive names, we use a kernel name couple (kn1,kn2)
@@ -489,6 +490,10 @@ module KerPair = struct
   let user = function
     | Same kn -> kn
     | Dual (kn,_) -> kn
+
+  let canonize kp = match kp with
+  | Same _ -> kp
+  | Dual (_, kn) -> Same kn
 
   let same kn = Same kn
   let make knu knc = if KerName.equal knu knc then Same knc else Dual (knu,knc)
@@ -656,6 +661,10 @@ struct
       Hashset.Combine.combine (MutInd.SyntacticOrd.hash m) (Int.hash i)
   end
 
+  let canonize ((mind, i) as ind) =
+    let mind' = MutInd.canonize mind in
+    if mind' == mind then ind else (mind', i)
+
 end
 
 module Construct =
@@ -701,6 +710,10 @@ struct
     let hash (ind, i) =
       Hashset.Combine.combine (Ind.SyntacticOrd.hash ind) (Int.hash i)
   end
+
+  let canonize ((ind, i) as cstr) =
+    let ind' = Ind.canonize ind in
+    if ind' == ind then cstr else (ind', i)
 
 end
 
@@ -876,6 +889,13 @@ struct
     let equal = CanOrd.equal
     let compare = CanOrd.compare
 
+    let canonize p =
+      let { proj_ind; proj_npars; proj_arg; proj_name } = p in
+      let proj_ind' = Ind.canonize proj_ind in
+      let proj_name' = Constant.canonize proj_name in
+      if proj_ind' == proj_ind && proj_name' == proj_name then p
+      else { proj_ind = proj_ind'; proj_name = proj_name'; proj_npars; proj_arg }
+
     module Self_Hashcons = struct
       type nonrec t = t
       type u = (inductive -> inductive) * (Constant.t -> Constant.t)
@@ -901,7 +921,9 @@ struct
       let ind = fst p.proj_ind in
       let ind' = f ind in
       if ind == ind' then p
-      else {p with proj_ind = (ind',snd p.proj_ind)}
+      else
+        let proj_name = KerPair.change_label ind' (label p) in
+        {p with proj_ind = (ind',snd p.proj_ind); proj_name}
 
     let to_string p = Constant.to_string (constant p)
     let print p = Constant.print (constant p)
@@ -962,6 +984,10 @@ struct
       let hash = hash
     end
 
+  let canonize ((r, u) as p) =
+    let r' = Repr.canonize r in
+    if r' == r then p else (r',  u)
+
   module HashProjection = Hashcons.Make(Self_Hashcons)
 
   let hcons = Hashcons.simple_hcons HashProjection.generate HashProjection.hcons Repr.hcons
@@ -981,7 +1007,17 @@ struct
   let to_string p = Constant.to_string (constant p)
   let print p = Constant.print (constant p)
 
+  let debug_to_string p =
+    (if unfolded p then "unfolded(" else "") ^
+    Constant.debug_to_string (constant p) ^
+    (if unfolded p then ")" else "")
+  let debug_print p = str (debug_to_string p)
+
 end
+
+module PRmap = HMap.Make(Projection.Repr.CanOrd)
+module PRset = PRmap.Set
+module PRpred = Predicate.Make(Projection.Repr.CanOrd)
 
 module GlobRefInternal = struct
 
@@ -1068,6 +1104,18 @@ module GlobRef = struct
     let hash gr = GlobRefInternal.global_hash_gen Constant.SyntacticOrd.hash Ind.SyntacticOrd.hash Construct.SyntacticOrd.hash gr
   end
 
+  let canonize gr = match gr with
+  | VarRef _ -> gr
+  | ConstRef c ->
+    let c' = Constant.canonize c in
+    if c' == c then gr else ConstRef c'
+  | IndRef ind ->
+    let ind' = Ind.canonize ind in
+    if ind' == ind then gr else IndRef ind'
+  | ConstructRef c ->
+    let c' = Construct.canonize c in
+    if c' == c then gr else ConstructRef c'
+
   let is_bound = function
   | VarRef _ -> false
   | ConstRef cst -> ModPath.is_bound (Constant.modpath cst)
@@ -1096,3 +1144,28 @@ type lname = Name.t CAst.t
 type lstring = string CAst.t
 
 let lident_eq = CAst.eq Id.equal
+
+(** Evaluable references (whose transparency can be controlled) *)
+
+module Evaluable = struct
+  type t =
+    | EvalVarRef of Id.t
+    | EvalConstRef of Constant.t
+    | EvalProjectionRef of Projection.Repr.t
+
+  let map fvar fcst fprj = function
+    | EvalVarRef v -> EvalVarRef (fvar v)
+    | EvalConstRef c -> EvalConstRef (fcst c)
+    | EvalProjectionRef p -> EvalProjectionRef (fprj p)
+
+  let equal er1 er2 =
+    er1 == er2 ||
+    match er1, er2 with
+    | EvalVarRef v1, EvalVarRef v2 ->
+        Id.equal v1 v2
+    | EvalConstRef c1, EvalConstRef c2 ->
+        Constant.CanOrd.equal c1 c2
+    | EvalProjectionRef p1, EvalProjectionRef p2 ->
+        Projection.Repr.CanOrd.equal p1 p2
+    | _ -> false
+end

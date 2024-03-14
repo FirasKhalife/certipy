@@ -208,10 +208,10 @@ let print_usage = print_usage_channel stderr
 let print_usage_coqtop () =
   print_usage "Usage: coqchk <options> modules\n\n"
 
-let usage () =
+let usage exitcode =
   print_usage_coqtop ();
   flush stderr;
-  exit 1
+  exit exitcode
 
 open Type_errors
 
@@ -309,6 +309,9 @@ let explain_exn = function
   | CheckInductive.InductiveMismatch (mind,field) ->
     hov 0 (MutInd.print mind ++ str ": field " ++ str field ++ str " is incorrect.")
 
+  | Mod_checking.BadConstant (cst, why) ->
+    hov 0 (Constant.print cst ++ spc() ++ why)
+
   | Assert_failure (s,b,e) ->
       hov 0 (anomaly_string () ++ str "assert failure" ++ spc () ++
                (if s = "" then mt ()
@@ -344,7 +347,7 @@ let parse_args argv =
       parse rem
 
     | ("-Q"|"-R") :: d :: p :: rem -> set_include d p;parse rem
-    | ("-Q"|"-R") :: ([] | [_]) -> usage ()
+    | ("-Q"|"-R") :: ([] | [_]) -> usage 1
 
     | "-debug" :: rem -> CDebug.set_debug_all true; parse rem
 
@@ -354,7 +357,7 @@ let parse_args argv =
       print_endline coqlib;
       exit 0
 
-    | ("-?"|"-h"|"-H"|"-help"|"--help") :: _ -> usage ()
+    | ("-?"|"-h"|"-H"|"-help"|"--help") :: _ -> usage 0
 
     | ("-v"|"--version") :: _ -> version ()
     | ("-m" | "--memory") :: rem -> Check_stat.memory_stat := true; parse rem
@@ -362,10 +365,10 @@ let parse_args argv =
         Check_stat.output_context := true; parse rem
 
     | "-admit" :: s :: rem -> add_admit s; parse rem
-    | "-admit" :: [] -> usage ()
+    | "-admit" :: [] -> usage 1
 
     | "-norec" :: s :: rem -> add_norec s; parse rem
-    | "-norec" :: [] -> usage ()
+    | "-norec" :: [] -> usage 1
 
     | "-silent" :: rem ->
         Flags.quiet := true; parse rem
@@ -380,7 +383,6 @@ let parse_args argv =
 (* XXX: At some point we need to either port the checker to use the
    feedback system or to remove its use completely. *)
 let init_with_argv argv =
-  Sys.catch_break false; (* Ctrl-C is fatal during the initialisation *)
   let _fhandle = Feedback.(add_feeder (console_feedback_listener Format.err_formatter)) in
   try
     parse_args argv;

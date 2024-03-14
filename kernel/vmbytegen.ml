@@ -534,7 +534,7 @@ let rec compile_lam env cenv lam sz cont =
 
   | Lint i -> compile_structured_constant cenv (Const_b0 i) sz cont
 
-  | Lval v -> compile_structured_constant cenv (Const_val v) sz cont
+  | Lval v -> compile_structured_constant cenv (Const_val (get_lval v)) sz cont
 
   | Luint i -> compile_structured_constant cenv (Const_uint i) sz cont
 
@@ -809,8 +809,6 @@ let rec compile_lam env cenv lam sz cont =
       comp_args (compile_lam env) cenv args sz (Kprim(op, kn)::cont)
     end
 
-  | Lforce -> CErrors.anomaly Pp.(str "The VM should not use force")
-
 and compile_get_global env cenv (kn,u) sz cont =
   let () = set_max_stack_size cenv sz in
   if UVars.Instance.is_empty u then
@@ -926,7 +924,7 @@ let compile ?universes:(universes=(0,0)) env sigma c =
     (if !dump_bytecode then
       Feedback.msg_debug (dump_bytecodes init_code fun_code fv)) ;
     let res = init_code @ fun_code in
-    (to_memory res, Array.of_list fv)
+    to_memory (Array.of_list fv) res
 
 let warn_compile_error =
   CWarnings.create ~name:"bytecode-compiler-failed-compilation" ~category:CWarnings.CoreCategories.bytecode_compiler
@@ -945,7 +943,7 @@ let compile ~fail_on_error ?universes env sigma c =
 
 let compile_constant_body ~fail_on_error env univs = function
   | Undef _ | OpaqueDef _ -> Some BCconstant
-  | Primitive _ -> None
+  | Primitive _ | Symbol _ -> None
   | Def body ->
       let instance_size = UVars.AbstractContext.size (Declareops.universes_context univs) in
       let alias =
@@ -964,7 +962,7 @@ let compile_constant_body ~fail_on_error env univs = function
       | Some kn -> Some (BCalias kn)
       | _ ->
           let res = compile ~fail_on_error ~universes:instance_size env (empty_evars env) body in
-          Option.map (fun (code, fv) -> BCdefined (code, fv)) res
+          Option.map (fun code -> BCdefined code) res
 
 (* Shortcut of the previous function used during module strengthening *)
 

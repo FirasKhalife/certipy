@@ -27,6 +27,8 @@ let tactic_infer_flags with_evar = Pretyping.{
   expand_evars = true;
   program_mode = false;
   polymorphic = false;
+  undeclared_evars_patvars = false;
+  patvars_abstract = false;
 }
 
 (** FIXME: export a better interface in Tactics *)
@@ -215,13 +217,13 @@ let letin_pat_tac ev ipat na c cl =
     Instead, we parse indifferently any pattern and dispatch when the tactic is
     called. *)
 let map_pattern_with_occs (pat, occ) = match pat with
-| Pattern.PRef (GlobRef.ConstRef cst) -> (mk_occurrences_expr occ, Inl (Tacred.EvalConstRef cst))
-| Pattern.PRef (GlobRef.VarRef id) -> (mk_occurrences_expr occ, Inl (Tacred.EvalVarRef id))
+| Pattern.PRef (GlobRef.ConstRef cst) -> (mk_occurrences_expr occ, Inl (Evaluable.EvalConstRef cst))
+| Pattern.PRef (GlobRef.VarRef id) -> (mk_occurrences_expr occ, Inl (Evaluable.EvalVarRef id))
 | _ -> (mk_occurrences_expr occ, Inr pat)
 
 let get_evaluable_reference = function
-| GlobRef.VarRef id -> Proofview.tclUNIT (Tacred.EvalVarRef id)
-| GlobRef.ConstRef cst -> Proofview.tclUNIT (Tacred.EvalConstRef cst)
+| GlobRef.VarRef id -> Proofview.tclUNIT (Evaluable.EvalVarRef id)
+| GlobRef.ConstRef cst -> Proofview.tclUNIT (Evaluable.EvalConstRef cst)
 | r -> Proofview.tclZERO (Tacred.NotEvaluableRef r)
 
 let reduce r cl =

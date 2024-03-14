@@ -28,7 +28,7 @@ val do_assumptions
   -> poly:bool
   -> scope:Locality.definition_scope
   -> kind:Decls.assumption_object_kind
-  -> ?deprecation:Deprecation.t
+  -> ?user_warns:UserWarn.t
   -> Declaremods.inline
   -> (ident_decl list * constr_expr) with_coercion list
   -> unit
@@ -40,19 +40,19 @@ val declare_variable
   -> UState.named_universes_entry
   -> Impargs.manual_implicits
   -> Glob_term.binding_kind
-  -> variable CAst.t
-  -> unit
+  -> variable
+  -> GlobRef.t * UVars.Instance.t
 
 val declare_axiom
   : coercion_flag
   -> local:Locality.import_status
   -> kind:Decls.assumption_object_kind
-  -> ?deprecation:Deprecation.t
+  -> ?user_warns:UserWarn.t
   -> Constr.types
   -> UState.named_universes_entry
   -> Impargs.manual_implicits
   -> Declaremods.inline
-  -> variable CAst.t
+  -> variable
   -> GlobRef.t * UVars.Instance.t
 
 (** Context command *)

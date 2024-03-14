@@ -52,6 +52,7 @@ type coqargs_logic_config = {
   impredicative_set : bool;
   indices_matter    : bool;
   type_in_type      : bool;
+  rewrite_rules     : bool;
   toplevel_name     : top;
 }
 
@@ -65,6 +66,7 @@ type coqargs_config = {
   native_compiler : native_compiler;
   native_output_dir : CUnix.physical_path;
   native_include_dirs : CUnix.physical_path list;
+  output_directory : CUnix.physical_path option;
   time        : time_config option;
   profile : string option;
   print_emacs : bool;
@@ -110,6 +112,7 @@ let default_logic_config = {
   impredicative_set = false;
   indices_matter = false;
   type_in_type = false;
+  rewrite_rules = false;
   toplevel_name = TopLogical default_toplevel;
 }
 
@@ -121,6 +124,7 @@ let default_config = {
   native_compiler = default_native;
   native_output_dir = ".coq-native";
   native_include_dirs = [];
+  output_directory = None;
   time         = None;
   profile = None;
   print_emacs  = false;
@@ -242,6 +246,7 @@ let get_compat_file = function
 let get_compat_files v =
   let coq_compat = get_compat_file v in
   match v with
+  | "8.19" -> coq_compat :: ["Ltac2.Compat.Coq819"]
   | "8.18" | "8.17" -> coq_compat :: ["Ltac2.Compat.Coq818"]
   | _ -> [coq_compat]
 
@@ -327,9 +332,8 @@ let parse_args ~usage ~init arglist : t * string list =
       add_set_option oval ["Mangle"; "Names"; "Prefix"] (OptionSet(Some(next ())))
 
     |"-profile-ltac-cutoff" ->
-      Flags.profile_ltac := true;
       Flags.profile_ltac_cutoff := get_float ~opt (next ());
-      oval
+      add_set_option oval ["Ltac"; "Profiling"] (OptionSet None)
 
     |"-load-vernac-object"|"-require" ->
       add_vo_require oval (next ()) None None
@@ -380,6 +384,11 @@ let parse_args ~usage ~init arglist : t * string list =
       let native_output_dir = next () in
       { oval with config = { oval.config with native_output_dir } }
 
+    |"-output-dir" | "-output-directory" ->
+      let dir = next () in
+      let dir = if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir else dir in
+      { oval with config = { oval.config with output_directory = Some dir } }
+
     |"-nI" ->
       let include_dir = next () in
       { oval with config = {oval.config with native_include_dirs = include_dir :: oval.config.native_include_dirs } }
@@ -406,6 +415,7 @@ let parse_args ~usage ~init arglist : t * string list =
       add_set_option oval Vernacentries.allow_sprop_opt_name (OptionSet None)
     |"-disallow-sprop" ->
       add_set_option oval Vernacentries.allow_sprop_opt_name OptionUnset
+    |"-allow-rewrite-rules" -> set_logic (fun o -> { o with rewrite_rules = true }) oval
     |"-indices-matter" -> set_logic (fun o -> { o with indices_matter = true }) oval
     |"-m"|"--memory" -> { oval with post = { memory_stat = true }}
     |"-noinit"|"-nois" -> { oval with pre = { oval.pre with load_init = false }}

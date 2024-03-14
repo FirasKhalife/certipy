@@ -58,6 +58,10 @@ val is_in_system_path : string -> bool
 val where_in_path :
   ?warn:bool -> CUnix.load_path -> string -> CUnix.physical_path * string
 
+(** [get_output_path fname] relativizes [fname] with respect to the
+    default output directory if [fname] is not absolute *)
+val get_output_path : CUnix.physical_path -> CUnix.physical_path
+
 (** [find_file_in_path ?warn loadpath filename] returns the directory
     name and long name of the first physical occurrence [filename] in
     one of the directory of the [loadpath];
@@ -92,7 +96,7 @@ type magic_number_error = {filename: string; actual: int32; expected: int32}
 exception Bad_magic_number of magic_number_error
 exception Bad_version_number of magic_number_error
 
-val with_magic_number_check : ('a -> 'b) -> 'a -> 'b
+val with_magic_number_check : ?loc:Loc.t -> ('a -> 'b) -> 'a -> 'b
 
 (** big-endian encoding and decoding of int32 (4 btyes) and int64 (8 bytes) *)
 

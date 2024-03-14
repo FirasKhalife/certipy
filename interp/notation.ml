@@ -81,7 +81,7 @@ type notation_location = (DirPath.t * DirPath.t) * string
 type notation_data = {
   not_interp : interpretation;
   not_location : notation_location;
-  not_deprecation : Deprecation.t option;
+  not_user_warns : UserWarn.t option;
 }
 
 type activation = bool
@@ -1288,31 +1288,15 @@ let enable_prim_token_interpretation infos =
     (the latter inside a [Mltop.declare_cache_obj]).
 *)
 
-let fresh_string_of =
-  let count = ref 0 in
-  fun root -> count := !count+1; (string_of_int !count)^"_"^root
-
-let declare_numeral_interpreter ?(local=false) sc dir interp (patl,uninterp,b) =
-  let uid = fresh_string_of sc in
-  register_bignumeral_interpretation uid (interp,uninterp);
-  enable_prim_token_interpretation
-    { pt_local = local;
-      pt_scope = sc;
-      pt_interp_info = Uid uid;
-      pt_required = dir;
-      pt_refs = List.map_filter glob_prim_constr_key patl;
-      pt_in_match = b }
-let declare_string_interpreter ?(local=false) sc dir interp (patl,uninterp,b) =
-  let uid = fresh_string_of sc in
-  register_string_interpretation uid (interp,uninterp);
-  enable_prim_token_interpretation
-    { pt_local = local;
-      pt_scope = sc;
-      pt_interp_info = Uid uid;
-      pt_required = dir;
-      pt_refs = List.map_filter glob_prim_constr_key patl;
-      pt_in_match = b }
-
+let glob_prim_constr_key c = match DAst.get c with
+  | GRef (ref, _) -> Some (canonical_gr ref)
+  | GApp (c, _) ->
+    begin match DAst.get c with
+    | GRef (ref, _) -> Some (canonical_gr ref)
+    | _ -> None
+    end
+  | GProj ((cst,_), _, _) -> Some (canonical_gr (GlobRef.ConstRef cst))
+  | _ -> None
 
 let check_required_module ?loc sc (sp,d) =
   try let _ = Nametab.global_of_path sp in ()
@@ -1385,9 +1369,11 @@ let pr_optional_scope = function
   | LastLonelyNotation -> mt ()
   | NotationInScope scope -> spc () ++ strbrk "in scope" ++ spc () ++ str scope
 
+let warning_overridden_name = "notation-overridden"
+
 let w_nota_overridden =
   CWarnings.create_warning
-    ~from:[CWarnings.CoreCategories.parsing] ~name:"notation-overridden" ()
+    ~from:[CWarnings.CoreCategories.parsing] ~name:warning_overridden_name ()
 
 let warn_notation_overridden =
   CWarnings.create_in w_nota_overridden
@@ -1413,8 +1399,8 @@ let warn_deprecation_overridden =
 let warn_override_if_needed (scopt,ntn) overridden data old_data =
   if overridden then warn_notation_overridden (scopt,ntn)
   else
-    if data.not_deprecation <> old_data.not_deprecation then
-      warn_deprecation_overridden ((scopt,ntn),old_data.not_deprecation,data.not_deprecation)
+    if data.not_user_warns <> old_data.not_user_warns then
+      warn_deprecation_overridden ((scopt,ntn),old_data.not_user_warns,data.not_user_warns)
 
 let check_parsing_override (scopt,ntn) data = function
   | OnlyParsingData (_,old_data) ->
@@ -1436,8 +1422,8 @@ let check_printing_override (scopt,ntn) data parsingdata printingdata =
     if overridden then NoParsingData else parsingdata in
   let exists = List.exists (fun (on_printing,old_data) ->
     let exists = interpretation_eq data.not_interp old_data.not_interp in
-    if exists && data.not_deprecation <> old_data.not_deprecation then
-      warn_deprecation_overridden ((scopt,ntn),old_data.not_deprecation,data.not_deprecation);
+    if exists && data.not_user_warns <> old_data.not_user_warns then
+      warn_deprecation_overridden ((scopt,ntn),old_data.not_user_warns,data.not_user_warns);
     exists) printingdata in
   parsing_update, exists
 
@@ -1529,7 +1515,7 @@ let interp_notation ?loc ntn local_scopes =
   let scopes = make_current_scopes local_scopes in
   try
     let (n,sc) = find_interpretation ntn (find_notation ntn) scopes in
-    Option.iter (fun d -> warn_deprecated_notation ?loc (ntn,d)) n.not_deprecation;
+    Option.iter (fun d -> Option.iter (fun d -> warn_deprecated_notation ?loc (ntn,d)) d.UserWarn.depr) n.not_user_warns;
     n.not_interp, (n.not_location, sc)
   with Not_found as exn ->
     let _, info = Exninfo.capture exn in
@@ -1720,14 +1706,14 @@ type entry_coercion_kind =
   | IsEntryGlobal of string * int
   | IsEntryIdent of string * int
 
-let declare_notation (scopt,ntn) pat df ~use coe deprecation =
+let declare_notation (scopt,ntn) pat df ~use coe user_warns =
   (* Register the interpretation *)
   let scope = match scopt with NotationInScope s -> s | LastLonelyNotation -> default_scope in
   let sc = find_scope scope in
   let notdata = {
     not_interp = pat;
     not_location = df;
-    not_deprecation = deprecation;
+    not_user_warns = user_warns;
   } in
   let notation_update,printing_update = update_notation_data (scopt,ntn) use notdata sc.notations in
   let sc = { sc with notations = notation_update } in
@@ -2671,6 +2657,11 @@ let toggle_abbreviations ~on found ntn_pattern =
     Abbreviation.toggle_abbreviations ~on ~use:ntn_pattern.use_pattern test
   with Exit -> ()
 
+let warn_nothing_to_enable_or_disable =
+  CWarnings.create ~name:"no-notation-to-enable-or-disable"
+    ~category:CWarnings.CoreCategories.syntax
+    (fun () -> strbrk "Found no matching notation to enable or disable.")
+
 let toggle_notations ~on ~all ?(verbose=true) prglob ntn_pattern =
   let found = ref [] in
   (* Deal with (parsing) notations *)
@@ -2688,8 +2679,7 @@ let toggle_notations ~on ~all ?(verbose=true) prglob ntn_pattern =
   (* Deal with abbreviations *)
   toggle_abbreviations ~on found ntn_pattern;
   match !found with
-  | [] ->
-    user_err (strbrk "Found no matching notation to enable or disable.")
+  | [] -> warn_nothing_to_enable_or_disable ()
   | _::_::_ when not all ->
     user_err (strbrk "More than one interpretation bound to this notation, confirm with the \"all\" modifier.")
   | _ ->
@@ -2705,7 +2695,7 @@ let toggle_notations ~on ~all ?(verbose=true) prglob ntn_pattern =
             match kind with
             | Inl (l, (sc, (entry, _))) ->
               let sc = match sc with NotationInScope sc -> sc | LastLonelyNotation -> default_scope in
-              let data = { not_interp = i; not_location = l; not_deprecation = None } in
+              let data = { not_interp = i; not_location = l; not_user_warns = None } in
               hov 0 (str "Notation " ++ pr_notation_data prglob (Some true,Some true,data) ++
               (match entry with InCustomEntry s -> str " (in custom " ++ str s ++ str ")" | _ -> mt ()) ++
               (if String.equal sc default_scope then mt () else (brk (1,2) ++ str ": " ++ str sc)))

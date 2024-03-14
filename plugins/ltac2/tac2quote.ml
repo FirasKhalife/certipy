@@ -24,8 +24,6 @@ let wit_ident = Arg.create "ident"
 let wit_constr = Arg.create "constr"
 let wit_open_constr = Arg.create "open_constr"
 let wit_preterm = Arg.create "preterm"
-let wit_ltac1 = Arg.create "ltac1"
-let wit_ltac1val = Arg.create "ltac1val"
 
 (** Syntactic quoting of expressions. *)
 
@@ -178,6 +176,8 @@ and of_intro_pattern_action {loc;v=pat} = match pat with
   std_constructor ?loc "IntroOrAndPattern" [of_or_and_intro_pattern pat]
 | QIntroInjection il ->
   std_constructor ?loc "IntroInjection" [of_intro_patterns il]
+| QIntroApplyOn (c, i) ->
+  std_constructor ?loc "IntroApplyOn" [thunk @@ of_open_constr c; of_intro_pattern i]
 | QIntroRewrite b ->
   std_constructor ?loc "IntroRewrite" [of_bool ?loc b]
 
@@ -452,10 +452,7 @@ let of_constr_matching {loc;v=m} =
     of_tuple [knd; pat; e]
   in
   let e = of_list ?loc map m in
-  let tykn = pattern_core "constr_matching" in
-  let ty = CAst.make ?loc (CTypRef (AbsKn (Other tykn),[CAst.make ?loc (CTypVar Anonymous)])) in
-  CAst.make ?loc (CTacCnv (e, ty))
-
+  e
 
 (** From the patterns and the body of the branch, generate:
     - a goal pattern: (constr_match list * constr_match)

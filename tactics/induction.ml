@@ -137,6 +137,8 @@ let tactic_infer_flags with_evar = Pretyping.{
   expand_evars = true;
   program_mode = false;
   polymorphic = false;
+  undeclared_evars_patvars = false;
+  patvars_abstract = false;
 }
 
 let onOpenInductionArg env sigma tac = function
@@ -1351,7 +1353,7 @@ let pose_induction_arg_then isrec with_evars (is_arg_pure_hyp,from_prefix) elim
   let ccl = Proofview.Goal.concl gl in
   let check = check_enough_applied env sigma elim in
   let sigma', c, _ = use_bindings env sigma elim false (c0,lbind) t0 in
-  let abs = AbstractPattern (from_prefix,check,Name id,(pending,c),cls,false) in
+  let abs = AbstractPattern (from_prefix,check,Name id,(pending,c),cls) in
   let (id,sign,_,lastlhyp,ccl,res) = make_abstraction env sigma' ccl abs in
   match res with
   | None ->

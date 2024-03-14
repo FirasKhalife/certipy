@@ -91,7 +91,7 @@ In this case, no spaces are allowed in the symbol.  Also, if the
 symbol starts with a double quote, it must be surrounded with single
 quotes to prevent confusion with the beginning of a string symbol.
 
-A notation binds a syntactic expression to a term. Unless the parser
+A notation binds a syntactic expression to a term, called its :gdef:`interpretation`. Unless the parser
 and pretty-printer of Coq already know how to deal with the syntactic
 expression (such as through :cmd:`Reserved Notation` or for notations
 that contain only literals), explicit precedences and
@@ -100,7 +100,7 @@ associativity rules have to be given.
 .. note::
 
    The right-hand side of a notation is interpreted at the time the notation is
-   given. In particular, disambiguation of constants, :ref:`implicit arguments
+   given. Disambiguation of constants, :ref:`implicit arguments
    <ImplicitArguments>` and other notations are resolved at the
    time of the declaration of the notation. The right-hand side is
    currently typed only at use time but this may change in the future.
@@ -304,7 +304,8 @@ The second, more powerful control on printing is by using :n:`@syntax_modifier`\
        (IF_then_else True False True)
        (IF_then_else True False True)).
 
-A *format* is an extension of the string denoting the notation with
+A *format* tells how to control the indentation and line breaks when printing
+a notation. It is a string extending the notation with
 the possible following elements delimited by single quotes:
 
 - tokens of the form ``'/ '`` are translated into breaking points.  If
@@ -352,13 +353,11 @@ at the time of use of the notation.
    If a given notation string occurs only in ``only printing`` rules,
    the parser is not modified at all.
 
-   To a given notation string and scope can be attached at most one
-   notation with both parsing and printing or with only
-   parsing. Contrastingly, an arbitrary number of ``only printing``
-   notations differing in their right-hand sides but only a unique
-   right-hand side can be attached to a given string and
-   scope. Obviously, expressions printed by means of such extra
-   printing rules will not be reparsed to the same form.
+   Notations used for parsing, that is notations not restricted with
+   the ``only printing`` modifier, can have only a single
+   interpretation per scope. On the other side, notations marked with
+   ``only printing`` can have multiple associated interpretations,
+   even in the same scope.
 
 .. note::
 
@@ -557,7 +556,8 @@ Enabling and disabling notations
       Cannot enable or disable for parsing a notation that was
       originally defined as only printing.
 
-   .. exn:: Found no matching notation to enable or disable.
+   .. warn:: Found no matching notation to enable or disable.
+      :name: Found no matching notation to enable or disable
 
       No previously defined notation satisfies the given constraints.
 
@@ -2437,7 +2437,7 @@ The following errors apply to both string and number notations:
    The following example parses and prints natural numbers between
    :g:`0` and :g:`n-1` as terms of type :g:`Fin.t n`.
 
-   .. coqtop:: all reset
+   .. coqtop:: all reset warn
 
       Require Import Vector.
       Print Fin.t.
@@ -2568,14 +2568,7 @@ Tactic notations allow customizing the syntax of tactics.
 
    The nonterminals that can specified in the tactic notation are:
 
-     .. todo uconstr represents a type with holes.  At the moment uconstr doesn't
-        appear in the documented grammar.  Maybe worth ressurecting with a better name,
-        maybe "open_term"?
-        see https://github.com/coq/coq/pull/11718#discussion_r413721234
-
-     .. todo 'open_constr' appears to be another possible value based on the
-        the message from "Tactic Notation open_constr := idtac".
-        Also (at least) "ref", "string", "preident", "int" and "ssrpatternarg".
+     .. Some missing entries: "ref", "string", "preident", "int" and "ssrpatternarg".
         (from reading .v files).
         Looks like any string passed to "make0" in the code is valid.  But do
         we want to support all these?
@@ -2618,6 +2611,11 @@ Tactic notations allow customizing the syntax of tactics.
         - :token:`one_term`
         - a term
         - :tacn:`exact`
+
+      * - ``open_constr``
+        - :token:`one_term`
+        - a term where all `_` which are not resolved by unification become evars; typeclass resolution is not triggered
+        - tacn:`epose`, tacn:`eapply`
 
       * - ``uconstr``
         - :token:`one_term`

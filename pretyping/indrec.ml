@@ -309,7 +309,7 @@ let type_rec_branch is_rec dep env sigma (vargs,depPvect,decP) (mind,tyi) cs rec
               | [] -> None,[]
               | ra::rest ->
                   (match dest_recarg ra with
-                    | Mrec (RecArgInd (mind',j)) -> ((if is_rec && Names.MutInd.CanOrd.equal mind mind' then depPvect.(j) else None),rest)
+                    | Mrec (RecArgInd (mind',j)) -> ((if is_rec && QMutInd.equal env mind mind' then depPvect.(j) else None),rest)
                     | Norec | Mrec (RecArgPrim _) -> (None,rest))
           in
           (match optionpos with
@@ -382,7 +382,7 @@ let make_rec_branch_arg env sigma (nparrec,fvect,decF) mind f cstr recargs =
         let optionpos =
           match dest_recarg recarg with
             | Norec | Mrec (RecArgPrim _) -> None
-            | Mrec (RecArgInd (mind',i)) -> if Names.MutInd.CanOrd.equal mind mind' then fvect.(i) else None
+            | Mrec (RecArgInd (mind',i)) -> if QMutInd.equal env mind mind' then fvect.(i) else None
         in
         (match optionpos with
            | None ->
@@ -620,45 +620,6 @@ let default_case_analysis_dependence env ind =
 let build_case_analysis_scheme_default env sigma pity kind =
   let dep = default_case_analysis_dependence env (fst pity) in
   build_case_analysis_scheme env sigma pity dep kind
-
-(**********************************************************************)
-(* [modify_sort_scheme s rec] replaces the sort of the scheme
-   [rec] by [s] *)
-
-let change_sort_arity sort =
-  let rec drec a = match kind a with
-    | Cast (c,_,_) -> drec c
-    | Prod (n,t,c) -> let s, c' = drec c in s, mkProd (n, t, c')
-    | LetIn (n,b,t,c) -> let s, c' = drec c in s, mkLetIn (n,b,t,c')
-    | Sort s -> s, mkSort sort
-    | _ -> assert false
-  in
-    drec
-
-(* Change the sort in the type of an inductive definition, builds the
-   corresponding eta-expanded term *)
-let weaken_sort_scheme env evd set sort npars term ty =
-  let evdref = ref evd in
-  let rec drec ctx np elim =
-    match kind elim with
-      | Prod (n,t,c) ->
-          let ctx = LocalAssum (n, t) :: ctx in
-          if Int.equal np 0 then
-            let osort, t' = change_sort_arity (EConstr.ESorts.kind !evdref sort) t in
-              evdref := (if set then Evd.set_eq_sort else Evd.set_leq_sort) env !evdref sort (EConstr.ESorts.make osort);
-              mkProd (n, t', c),
-              mkLambda (n, t', mkApp(term, Context.Rel.instance mkRel 0 ctx))
-          else
-            let c',term' = drec ctx (np-1) c in
-            mkProd (n, t, c'), mkLambda (n, t, term')
-      | LetIn (n,b,t,c) ->
-        let ctx = LocalDef (n, b, t) :: ctx in
-        let c',term' = drec ctx np c in
-        mkLetIn (n,b,t,c'), mkLetIn (n,b,t,term')
-      | _ -> anomaly ~label:"weaken_sort_scheme" (Pp.str "wrong elimination type.")
-  in
-  let ty, term = drec [] npars ty in
-    !evdref, ty, term
 
 (**********************************************************************)
 (* Interface to build complex Scheme *)

@@ -191,8 +191,9 @@ let string_of_genarg_arg (ArgumentType arg) =
   let pr_and_short_name pr (c,_) = pr c
 
   let pr_evaluable_reference = function
-    | Tacred.EvalVarRef id -> pr_id id
-    | Tacred.EvalConstRef sp -> pr_global (GlobRef.ConstRef sp)
+    | Evaluable.EvalVarRef id -> pr_id id
+    | Evaluable.EvalConstRef sp -> pr_global (GlobRef.ConstRef sp)
+    | Evaluable.EvalProjectionRef p -> str "TODO projection" (* TODO *)
 
   let pr_quantified_hypothesis = function
     | AnonHyp n -> int n
@@ -381,9 +382,11 @@ let string_of_genarg_arg (ArgumentType arg) =
         str "<" ++ KerName.print kn ++ str ">"
 
   let pr_evaluable_reference_env env = function
-    | Tacred.EvalVarRef id -> pr_id id
-    | Tacred.EvalConstRef sp ->
+    | Evaluable.EvalVarRef id -> pr_id id
+    | Evaluable.EvalConstRef sp ->
       Nametab.pr_global_env (Termops.vars_of_env env) (GlobRef.ConstRef sp)
+    | Evaluable.EvalProjectionRef p ->
+      str "TODO projection" (* TODO *)
 
   let pr_as_disjunctive_ipat prc ipatl =
     keyword "as" ++ spc () ++
@@ -522,19 +525,8 @@ let string_of_genarg_arg (ArgumentType arg) =
     | FullInversion -> primitive "inversion"
     | FullInversionClear -> primitive "inversion_clear"
 
-  let pr_range_selector (i, j) =
-    if Int.equal i j then int i
-    else int i ++ str "-" ++ int j
-
-let pr_goal_selector toplevel = let open Goal_select in function
-  | SelectAlreadyFocused -> str "!:"
-  | SelectNth i -> int i ++ str ":"
-  | SelectList l -> prlist_with_sep (fun () -> str ", ") pr_range_selector l ++ str ":"
-  | SelectId id -> str "[" ++ Id.print id ++ str "]:"
-  | SelectAll -> assert toplevel; str "all:"
-
 let pr_goal_selector ~toplevel s =
-  (if toplevel then mt () else str "only ") ++ pr_goal_selector toplevel s
+  (if toplevel then mt () else str "only ") ++ Goal_select.pr_goal_selector s ++ str ":"
 
   let pr_lazy = function
     | General -> keyword "multi"
@@ -1189,6 +1181,20 @@ let pr_goal_selector ~toplevel s =
     pr_extend_gen pr lev ml args
 
   let pr_atomic_tactic env sigma c = pr_atomic_tactic_level env sigma c
+
+let pp_ltac_call_kind = function
+  | LtacNotationCall s -> pr_alias_key s
+  | LtacNameCall cst -> pr_ltac_constant cst
+  (* todo: don't want the KerName instead? *)
+  | LtacVarCall (_, id, t) -> Names.Id.print id
+  | LtacAtomCall te ->
+    pr_glob_tactic (Global.env ())
+      (CAst.make (TacAtom te))
+  | LtacConstrInterp (env, sigma, c, _) ->
+    pr_glob_constr_env env sigma c
+  | LtacMLCall te ->
+    (pr_glob_tactic (Global.env ())
+       te)
 
 let declare_extra_genarg_pprule wit
   (f : 'a raw_extra_genarg_printer)

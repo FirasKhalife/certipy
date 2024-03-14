@@ -980,15 +980,17 @@ let is_local_flag env flags =
   if flags.rDelta then false
   else
     let check = function
-    | EvalVarRef _ -> false
-    | EvalConstRef c -> Id.Set.is_empty (Environ.vars_of_global env (GlobRef.ConstRef c))
+    | Evaluable.EvalVarRef _ -> false
+    | Evaluable.EvalConstRef c -> Id.Set.is_empty (Environ.vars_of_global env (GlobRef.ConstRef c))
+    | Evaluable.EvalProjectionRef c -> false (* FIXME *)
     in
     List.for_all check flags.rConst
 
 let is_local_unfold env flags =
   let check (_, c) = match c with
-  | EvalVarRef _ -> false
-  | EvalConstRef c -> Id.Set.is_empty (Environ.vars_of_global env (GlobRef.ConstRef c))
+  | Evaluable.EvalVarRef _ -> false
+  | Evaluable.EvalConstRef c -> Id.Set.is_empty (Environ.vars_of_global env (GlobRef.ConstRef c))
+  | Evaluable.EvalProjectionRef c -> false (* FIXME *)
   in
   List.for_all check flags
 
@@ -1346,6 +1348,8 @@ let tactic_infer_flags with_evar = Pretyping.{
   expand_evars = true;
   program_mode = false;
   polymorphic = false;
+  undeclared_evars_patvars = false;
+  patvars_abstract = false;
 }
 
 type evars_flag = bool     (* true = pose evars       false = fail on evars *)
@@ -2776,7 +2780,7 @@ let letin_pat_tac with_evars with_eq id c occs =
     let env = Proofview.Goal.env gl in
     let ccl = Proofview.Goal.concl gl in
     let check t = true in
-    let abs = AbstractPattern (false,check,id,c,occs,false) in
+    let abs = AbstractPattern (false,check,id,c,occs) in
     let (id,_,depdecls,lastlhyp,ccl,res) = make_abstraction env sigma ccl abs in
     let (sigma, c) = match res with
     | None -> finish_evar_resolution ~flags:(tactic_infer_flags with_evars) env sigma c
@@ -3441,8 +3445,8 @@ let rec tclWRAPFINALLY before tac finally =
 let with_set_strategy lvl_ql k =
   let glob_key r =
     match r with
-    | GlobRef.ConstRef sp -> ConstKey sp
-    | GlobRef.VarRef id -> VarKey id
+    | GlobRef.ConstRef sp -> Evaluable.EvalConstRef sp
+    | GlobRef.VarRef id -> Evaluable.EvalVarRef id
     | _ -> user_err Pp.(str
                           "cannot set an inductive type or a constructor as transparent") in
   let kl = List.concat (List.map (fun (lvl, ql) -> List.map (fun q -> (lvl, glob_key q)) ql) lvl_ql) in
