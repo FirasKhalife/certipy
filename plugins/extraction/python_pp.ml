@@ -1,13 +1,13 @@
 
 open Pp
-open CErrors
+(* open CErrors *)
 open Util
 open Names
-open ModPath
+(* open ModPath *)
 open Table
-open Miniml
-open Mlutil
-open Modutil
+(* open Miniml *)
+(* open Mlutil *)
+(* open Modutil *)
 open Common
 
 (* Some utility functions *)
@@ -17,7 +17,7 @@ let r = ref (starting_sym)
 let reset_gensym () = r := starting_sym
 let gensym () = incr r; String.make 1 (Char.chr !r)
 
-let singlequote s = "'" ^ s ^ "'"
+(* let singlequote s = "'" ^ s ^ "'" *)
 
 let cut2 () = brk (0,-100000) ++ brk (0,0)
 
@@ -63,10 +63,10 @@ let pp_header_comment = function
 let then_nl pp = if Pp.ismt pp then mt () else pp ++ fnl ()
 
 (* pretty printing to erase uncovered types *)
-let pp_mldummy usf =
+(* let pp_mldummy usf =
   if usf.mldummy then
     str "__ = lambda x: __" ++ fnl ()
-  else mt ()
+  else mt () *)
 
 let preamble _ comment used_modules usf =
   pp_header_comment comment ++

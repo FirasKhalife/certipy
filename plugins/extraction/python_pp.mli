@@ -1,10 +1,10 @@
 (* the following pretty prints header and opening used modules and usf *)
 
 val preamble : 'a -> Pp.t option -> Names.ModPath.t list
-                  -> Extraction_plugin__Miniml.unsafe_needs -> Pp.t
+                  -> Miniml.unsafe_needs -> Pp.t
 
 val sig_preamble : 'a -> Pp.t option -> Names.ModPath.t list
-                  -> Extraction_plugin__Miniml.unsafe_needs -> Pp.t
+                  -> Miniml.unsafe_needs -> Pp.t
 
 (** Ad-hoc double-newline in v boxes, with enough negative whitespace
    to avoid indenting the intermediate blank line *)

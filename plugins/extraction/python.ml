@@ -63,7 +63,7 @@ let pp_global_name_cap k r = str (String.capitalize_ascii (str_global_name k r))
 let pp_global_name k r = str (str_global_name k r)
 
 (* for record fields *)
-let pp_global_with_key k key r = str (str_global_with_key k key r)
+(* let pp_global_with_key k key r = str (str_global_with_key k key r) *)
 
 let pp_modname mp = str (Common.pp_module mp)
 
@@ -138,7 +138,7 @@ let pp_type params vl t =
         pp_rec a1 ++ str (get_infix r) ++ pp_rec a2
     | Tglob (r,[]) -> pp_global_cap Type r
     | Tglob (gr,l)
-        when not (keep_singleton ()) && GlobRef.CanOrd.equal gr (sig_type_ref ()) ->
+        when not (keep_singleton ()) && Coqlib.check_ref sig_type_name gr ->
         pp_py_generics identity (List.map pp_rec l)
     | Tglob (r,l) ->
       pp_global_cap Type r ++ pp_py_generics identity (List.map pp_rec l)
@@ -600,11 +600,11 @@ let pp_record kn fields ip_equiv packet =
   pp_py_dataclass type_name pl [] [] [] false ++ cut2 () ++
   pp_py_dataclass cons_name pl [(type_name, pl)] fieldnames fieldtypes true
 
-let pp_coind pl name =
+(* let pp_coind pl name =
   let pl = rename_tvars keywords pl in
   pp_py_id_generics pl ++ name ++ str " = " ++
   pp_py_id_generics pl ++ str "__" ++ name ++ str " Lazy.t" ++
-  fnl () ++ str "and "
+  fnl () ++ str "and " *)
 
 (* pp_ind isCoinductive parentTypeName mlInductiveTypeList *)
 let pp_ind co kn ind =
@@ -625,7 +625,7 @@ let pp_ind co kn ind =
            p.ip_types)
       ind.ind_packets
   in
-  let rec pp_ind_rec i _ =
+  let pp_ind_rec i _ =
     (* inductive type name * position of type in the list of mutually-recursive inductive types *)
     let ip = (kn,i) in
     let ip_equiv = ind.ind_equiv, i in
