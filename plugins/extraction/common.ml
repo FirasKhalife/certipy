@@ -61,6 +61,7 @@ let pp_tuple f = function
 let pp_boxed_tuple f = function
   | [] -> mt ()
   | [x] -> f x
+  (* maps f to all list elements and prints a tuple by using pp_par for tuple parenthesis *)
   | l -> pp_par true (hov 0 (prlist_with_sep (fun () -> str "," ++ spc ()) f l))
 
 let pp_array f = function
@@ -603,6 +604,8 @@ let pp_global_with_key k key r =
       | JSON -> dottify (List.map unquote rls)
       | Haskell -> if modular () then pp_haskell_gen k mp rls else s
       | Ocaml -> pp_ocaml_gen k mp rls (Some l)
+      (* TODO *)
+      | Python -> pp_ocaml_gen k mp rls (Some l)
 
 let pp_global k r =
   pp_global_with_key k (repr_of_r r) r

@@ -24,20 +24,25 @@ open Common
 
 (*s Some utility functions. *)
 
+(* pretty printing type variables (i.e. 'a) *)
 let pp_tvar id = str ("'" ^ Id.to_string id)
 
+(* pretty printing lambda abstractions (takes param list) *)
 let pp_abst = function
   | [] -> mt ()
   | l  ->
       str "fun " ++ prlist_with_sep (fun () -> str " ") Id.print l ++
       str " ->" ++ spc ()
 
+(* pretty printing type parameters *)
 let pp_parameters l =
   (pp_boxed_tuple pp_tvar l ++ space_if (not (List.is_empty l)))
 
+(* pretty printing string parameters *)
 let pp_string_parameters l =
   (pp_boxed_tuple str l ++ space_if (not (List.is_empty l)))
 
+(* pretty printing let-in expressions *)
 let pp_letin pat def body =
   let fstline = str "let " ++ pat ++ str " =" ++ spc () ++ def in
   hv 0 (hv 0 (hov 2 fstline ++ spc () ++ str "in") ++ spc () ++ hov 0 body)
@@ -59,23 +64,31 @@ let keywords =
 (* Note: do not shorten [str "foo" ++ fnl ()] into [str "foo\n"],
    the '\n' character interacts badly with the Format boxing mechanism *)
 
+(* pretty printing opening a module *)
 let pp_open mp = str ("open "^ string_of_modfile mp) ++ fnl ()
 
+(* pretty printing comment *)
 let pp_comment s = str "(* " ++ hov 0 s ++ str " *)"
 
+(* pretty printing (header) comment, adding two new lines after it *)
 let pp_header_comment = function
   | None -> mt ()
   | Some com -> pp_comment com ++ fnl2 ()
 
+(* prints a new line following pretty printed expr if it is not empty *)
 let then_nl pp = if Pp.ismt pp then mt () else pp ++ fnl ()
 
+(* pretty prints dummy type *)
 let pp_tdummy usf =
   if usf.tdummy || usf.tunknown then str "type __ = Obj.t" ++ fnl () else mt ()
 
+(* pretty printing to erase uncovered types *)
 let pp_mldummy usf =
   if usf.mldummy then
     str "let __ = let rec f _ = Obj.repr f in Obj.repr f" ++ fnl ()
   else mt ()
+
+(* the following pretty prints header and opening used modules and usf *)
 
 let preamble _ comment used_modules usf =
   pp_header_comment comment ++
@@ -119,6 +132,7 @@ let operator_chars =
 let builtin_infixes =
   [ "::" ; "," ]
 
+(* returns true if all chars in list are ops *)
 let substring_all_opchars s start stop =
   let rec check_char i =
     if i >= stop then true
@@ -127,6 +141,7 @@ let substring_all_opchars s start stop =
   in
   check_char start
 
+(* returns true if reference represents an infix operator *)
 let is_infix r =
   is_inline_custom r &&
   (let s = find_custom r in
@@ -143,15 +158,18 @@ let is_infix r =
       (* or, is an OCaml built-in infix *)
       (List.mem inparens builtin_infixes)))
 
+(* gets infix operator of reference, likely assuming it is in parenthesis*)
 let get_infix r =
   let s = find_custom r in
   String.sub s 1 (String.length s - 2)
 
+(* gets inductive reference, possibly extracting it from inductive constructor *)
 let get_ind = let open GlobRef in function
   | IndRef _ as r -> r
   | ConstructRef (ind,_) -> IndRef ind
   | _ -> assert false
 
+(* extracts user facing name from inductive reference? *)
 let kn_of_ind = let open GlobRef in function
   | IndRef (kn,_) -> MutInd.user kn
   | _ -> assert false
@@ -167,6 +185,7 @@ let pp_fields r fields = List.map_i (pp_one_field r) 0 fields
 (*s Pretty-printing of types. [par] is a boolean indicating whether parentheses
     are needed or not. *)
 
+(* pp_type par type_vars type *)
 let pp_type par vl t =
   let rec pp_rec par = function
     | Tmeta _ | Tvar' _ | Taxiom -> assert false
@@ -215,7 +234,9 @@ let expr_needs_par = function
   | _        -> false
 
 let rec pp_expr par env args =
+  (* adds st at head of args and returns them sep by spc *)
   let apply st = pp_apply st par args
+  (* same as apply but adds par to added arg if args is not empty or if par *)
   and apply2 st = pp_apply2 st par args in
   function
     | MLrel n ->
@@ -225,7 +246,9 @@ let rec pp_expr par env args =
         let id = if Id.equal id dummy_name then Id.of_string "__" else id in
         apply (Id.print id)
     | MLapp (f,args') ->
+        (* pp_expr every applied argument with par *)
         let stl = List.map (pp_expr true env []) args' in
+        (* pp_expr f, adding pretty printed applied args to intial args *)
         pp_expr par env (stl @ args) f
     | MLlam _ as a ->
         let fl,a' = collect_lams a in
@@ -234,14 +257,23 @@ let rec pp_expr par env args =
         let st = pp_abst (List.rev fl) ++ pp_expr false env' [] a' in
         apply2 st
     | MLletin (id,a1,a2) ->
+        (* push_vars adds renames id if already in env (incremental addition, foo becomes foo0...) and adds it to it,
+            id_of_mlid returns dummy_name if id is Dummy and just the id if otherwise.
+            i is the list of ids in the env *)
         let i,env' = push_vars [id_of_mlid id] env in
+        (* Id.print id = str id. here gets str of the letin var name*)
         let pp_id = Id.print (List.hd i)
+        (* pp_expr of the first part, no par *)
         and pp_a1 = pp_expr false env [] a1
+        (* pp_expr of the second part, arguable par *)
         and pp_a2 = pp_expr (not par && expr_needs_par a2) env' [] a2 in
+        (* adds pp_letin with its args pretty printed to the initial args, with par *)
         hv 0 (apply2 (pp_letin pp_id pp_a1 pp_a2))
     | MLglob r -> apply (pp_global Term r)
     | MLfix (i,ids,defs) ->
+        (* adds renamed function args to env *)
         let ids',env' = push_vars (List.rev (Array.to_list ids)) env in
+        (* pp_fix with functions names and their bodies (definitions) *)
         pp_fix par env' i (Array.of_list (List.rev ids'),defs) args
     | MLexn s ->
         (* An [MLexn] may be applied, but I don't really care. *)
@@ -255,13 +287,15 @@ let rec pp_expr par env args =
         pp_apply (str "Obj.magic") par (pp_expr true env [] a :: args)
     | MLaxiom ->
         pp_par par (str "failwith \"AXIOM TO BE REALIZED\"")
+    (* explain ML cons behavior *)
     | MLcons (_,r,a) as c ->
+        (* a is already the args of c *)
         assert (List.is_empty args);
         begin match a with
           | _ when is_native_char c -> pp_native_char c
           | _ when is_native_string c -> pp_native_string c
           | [a1;a2] when is_infix r ->
-            let pp = pp_expr true env [] in
+            let pp = pp_expr true env [] in (* how can the ref be infix here in a cons, example? *)
             pp_par par (pp a1 ++ str (get_infix r) ++ pp a2)
           | _ when is_coinductive r ->
             let ne = not (List.is_empty a) in
@@ -280,6 +314,7 @@ let rec pp_expr par env args =
         end
     | MLtuple l ->
         assert (List.is_empty args);
+        (* pretty print expressions in list l and box them as a tuple *)
         pp_boxed_tuple (pp_expr true env []) l
     | MLcase (_, t, pv) when is_custom_match pv ->
         if not (is_regular_match pv) then
@@ -373,6 +408,10 @@ and pp_record_pat (fields, args) =
      (List.combine fields args) ++
    str " }"
 
+(*
+  pretty print consecutive patterns with same body
+  (Pcons of GlobeRef.t * ml_pattern list)
+*)
 and pp_cons_pat r ppl =
   if is_infix r && Int.equal (List.length ppl) 2 then
     List.hd ppl ++ str (get_infix r) ++ List.hd (List.tl ppl)
@@ -385,10 +424,15 @@ and pp_cons_pat r ppl =
       pp_global Cons r ++ space_if (not (List.is_empty ppl)) ++ pp_boxed_tuple identity ppl
 
 and pp_gen_pat ids env = function
+  (* consecutive patterns, pp each cons pattern, then pp the whole *)
   | Pcons (r, l) -> pp_cons_pat r (List.map (pp_gen_pat ids env) l)
+  (* TODO: SEE AGAIN *)
   | Pusual r -> pp_cons_pat r (List.map Id.print ids)
+  (* print tuple from generated pattern list *)
   | Ptuple l -> pp_boxed_tuple (pp_gen_pat ids env) l
+  (* print wildcard pattern *)
   | Pwild -> str "_"
+  (* search for lambda term with De Bruijn index n in env and print it *)
   | Prel n -> Id.print (get_db_name n env)
 
 and pp_ifthenelse env expr pv = match pv with
@@ -415,8 +459,13 @@ and pp_pat env pv =
        if Int.equal i (Array.length pv - 1) then mt () else fnl ())
     pv
 
+(* pp_function env functionBody *)
 and pp_function env t =
+  (* collect nested lambdas, returns all lambda identifiers * final body *)
   let bl,t' = collect_lams t in
+  (* push_vars renames id if already in env (incremental addition, foo becomes foo0...) and adds it to it,
+      id_of_mlid returns dummy_name ('_') if id is Dummy and just the id if otherwise.
+      bl is the list of ids in the env *)
   let bl,env' = push_vars (List.map id_of_mlid bl) env in
   match t' with
     | MLcase(Tglob(r,_),MLrel 1,pv) when
@@ -439,20 +488,33 @@ and pp_function env t =
     and passed here just for convenience. *)
 
 and pp_fix par env i (ids,bl) args =
+  (*
+    let rec a = ...
+    and b = ...
+    and c = ...
+    in ...
+  *)
   pp_par par
     (v 0 (str "let rec " ++
+          (* prvect_with_sep: separator -> printFunction -> array *)
           prvect_with_sep
+            (* separate mutual functions with 'and' *)
             (fun () -> fnl () ++ str "and ")
+            (* pair (id,b): print the function name then pp_function the body *)
             (fun (fi,ti) -> Id.print fi ++ pp_function env ti)
+            (* combines function name list and function body list to get a list of pairs*)
             (Array.map2 (fun id b -> (id,b)) ids bl) ++
           fnl () ++
-          hov 2 (str "in " ++ pp_apply (Id.print ids.(i)) false args)))
+          hov 2 (str "in " ++
+          (* adds pretty print i to args, no par *)
+          pp_apply (Id.print ids.(i)) false args)))
 
 (* Ad-hoc double-newline in v boxes, with enough negative whitespace
    to avoid indenting the intermediate blank line *)
 
 let cut2 () = brk (0,-100000) ++ brk (0,0)
 
+(* type comments above extracted code *)
 let pp_val e typ =
   hov 4 (str "(** val " ++ e ++ str " :" ++ spc () ++ pp_type false [] typ ++
   str " **)")  ++ cut2 ()
@@ -460,24 +522,33 @@ let pp_val e typ =
 (*s Pretty-printing of [Dfix] *)
 
 let pp_Dfix (rv,c,t) =
+  (* name of every fix to print *)
   let names = Array.map
     (fun r -> if is_inline_custom r then mt () else pp_global_name Term r) rv
   in
   let rec pp init i =
     if i >= Array.length rv then mt ()
     else
+      (* void if inline_custom or (not_custom and unused) -> do not extract it *)
       let void = is_inline_custom rv.(i) ||
         (not (is_custom rv.(i)) &&
          match c.(i) with MLexn "UNUSED" -> true | _ -> false)
       in
       if void then pp init (i+1)
       else
+        (* every fix body treaten as a function unless custom *)
         let def =
           if is_custom rv.(i) then str " = " ++ str (find_custom rv.(i))
           else pp_function (empty_env ()) c.(i)
         in
         (if init then mt () else cut2 ()) ++
+        (* val printing for OCaml *)
         pp_val names.(i) t.(i) ++
+        (*
+          let names.(i) = def.(i)
+           and names.(i+1) = def.(i+1)
+           ...
+        *)
         str (if init then "let rec " else "and ") ++ names.(i) ++ def ++
         pp false (i+1)
   in pp true 0
@@ -491,9 +562,11 @@ let pp_equiv param_list name = function
   | RenEquiv ren, _  ->
       str " = " ++ pp_parameters param_list ++ str (ren^".") ++ name
 
-
+(* pp_one_ind prefix ip_equiv survivingTypes inductiveTypeName constructorNames constructorsArgsMLTypes*)
 let pp_one_ind prefix ip_equiv pl name cnames ctyps =
+  (* rename survivingTypes if needed*)
   let pl = rename_tvars keywords pl in
+  (* pp_constructor: index * this constructor's args *)
   let pp_constructor i typs =
     (if Int.equal i 0 then mt () else fnl ()) ++
     hov 3 (str "| " ++ cnames.(i) ++
@@ -503,7 +576,9 @@ let pp_one_ind prefix ip_equiv pl name cnames ctyps =
   in
   pp_parameters pl ++ str prefix ++ name ++
   pp_equiv pl name ip_equiv ++ str " =" ++
+  (* if no constructors *)
   if Int.equal (Array.length ctyps) 0 then str " |"
+  (* if one or more constructors *)
   else fnl () ++ v 0 (prvecti pp_constructor ctyps)
 
 let pp_logical_ind packet =
@@ -513,9 +588,12 @@ let pp_logical_ind packet =
               prvect_with_sep spc Id.print packet.ip_consnames) ++
   fnl ()
 
+(* pretty prints an inductive type that has only one constructor and only one argument to this constructor
+   e.g. Inductive natPair := pair (n: nat) --> type natPair = nat, seen as an alias to the argument *)
 let pp_singleton kn packet =
   let name = pp_global_name Type (GlobRef.IndRef (kn,0)) in
   let l = rename_tvars keywords packet.ip_vars in
+  (* pp_parameters prints only when types variables survived in ML *)
   hov 2 (str "type " ++ pp_parameters l ++ name ++ str " =" ++ spc () ++
          pp_type false l (List.hd packet.ip_types.(0)) ++ fnl () ++
          pp_comment (str "singleton inductive, whose constructor was " ++
@@ -539,18 +617,24 @@ let pp_coind pl name =
   pp_parameters pl ++ str "__" ++ name ++ str " Lazy.t" ++
   fnl() ++ str "and "
 
+(* pp_ind isCoinductive parentTypeName mlInductiveTypeList *)
 let pp_ind co kn ind =
   let prefix = if co then "__" else "" in
   let initkwd = str "type " in
+  (* if mutually dependent types, 'and' equivalent to 'with' in Gallina *)
   let nextkwd = fnl () ++ str "and " in
+
   let names =
+    (* mapping on inductive types *)
     Array.mapi (fun i p -> if p.ip_logical then mt () else
                   pp_global_name Type (GlobRef.IndRef (kn,i)))
       ind.ind_packets
   in
   let cnames =
+    (* mapping on inductive types *)
     Array.mapi
       (fun i p -> if p.ip_logical then [||] else
+         (* mapping on ml_type list array, an constructor array with their types in a list *)
          Array.mapi (fun j _ -> pp_global Cons (GlobRef.ConstructRef ((kn,i),j+1)))
            p.ip_types)
       ind.ind_packets
@@ -558,6 +642,7 @@ let pp_ind co kn ind =
   let rec pp i kwd =
     if i >= Array.length ind.ind_packets then mt ()
     else
+      (* inductive type name * position of type in the list of mutually-recursive inductive types *)
       let ip = (kn,i) in
       let ip_equiv = ind.ind_equiv, i in
       let p = ind.ind_packets.(i) in
@@ -575,15 +660,19 @@ let pp_ind co kn ind =
 
 let pp_mind kn i =
   match i.ind_kind with
+    (* inductive type with only one constructor with only one argument *)
     | Singleton -> pp_singleton kn i.ind_packets.(0)
     | Coinductive -> pp_ind true kn i
     | Record fields -> pp_record kn fields (i.ind_equiv,0) i.ind_packets.(0)
     | Standard -> pp_ind false kn i
 
 let pp_decl = function
+    (* inline custom, no need for declaration *)
     | Dtype (r,_,_) when is_inline_custom r -> mt ()
     | Dterm (r,_,_) when is_inline_custom r -> mt ()
+    (* inductive declaration *)
     | Dind (kn,i) -> pp_mind kn i
+    (* type declaration *)
     | Dtype (r, l, t) ->
         let name = pp_global_name Type r in
         let l = rename_tvars keywords l in

@@ -706,6 +706,15 @@ let collect_lams =
     | x           -> acc,x
   in collect []
 
+(*s [collect_tarrs Tarr(id1,...Tarr(idn,t)...)] returns
+    [[idn;...;id1]] and the type [t]. *)
+
+let collect_tarrs =
+  let rec collect acc = function
+    | Tarr(id,t) -> collect (id::acc) t
+    | x           -> acc,x
+  in collect []
+
 (*s [collect_n_lams] does the same for a precise number of [MLlam]. *)
 
 let collect_n_lams =

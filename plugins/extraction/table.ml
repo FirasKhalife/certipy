@@ -621,7 +621,7 @@ let { Goptions.get = file_comment } =
 
 (*s Extraction Lang *)
 
-type lang = Ocaml | Haskell | Scheme | JSON
+type lang = Ocaml | Haskell | Scheme | JSON | Python
 
 let lang_ref = Summary.ref Ocaml ~name:"ExtrLang"
 

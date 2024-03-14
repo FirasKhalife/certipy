@@ -89,6 +89,7 @@ val tmp_id : ml_ident -> ml_ident
     the list [idn;...;id1] and the term [t]. *)
 
 val collect_lams : ml_ast -> ml_ident list * ml_ast
+val collect_tarrs: ml_type -> ml_type list * ml_type
 val collect_n_lams : int -> ml_ast -> ml_ident list * ml_ast
 val remove_n_lams : int -> ml_ast -> ml_ast
 val nb_lams : ml_ast -> int

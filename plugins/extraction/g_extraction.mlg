@@ -59,7 +59,7 @@ let pr_language = function
   | Haskell -> str "Haskell"
   | Scheme -> str "Scheme"
   | JSON -> str "JSON"
-
+  | Python -> str "Python"
 }
 
 VERNAC ARGUMENT EXTEND language
@@ -68,6 +68,7 @@ PRINTED BY { pr_language }
 | [ "Haskell" ] -> { Haskell }
 | [ "Scheme" ] -> { Scheme }
 | [ "JSON" ] -> { JSON }
+| [ "Python" ] -> { Python }
 END
 
 (* Extraction commands *)
