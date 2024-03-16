@@ -255,6 +255,7 @@ let prlist_sep_lastsep no_empty sep_thunk lastsep_thunk elem l =
   in
   insert_seps filtered_elems
 
+(* prlist with no sep, apply pr to l, then take out empty elements *)
 let prlist_strict pr l = prlist_sep_lastsep true mt mt pr l
 (* [prlist_with_sep sep pr [a ; ... ; c]] outputs
    [pr a ++ sep() ++ ... ++ sep() ++ pr c] *)

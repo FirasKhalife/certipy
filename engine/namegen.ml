@@ -379,6 +379,12 @@ let next_ident_away id avoid =
     next_ident_away_from_post_mangling (restart_subscript id) (fun id -> Id.Set.mem id avoid)
   else id
 
+let py_next_ident_away id avoid =
+  let conflict id = Id.Set.mem id avoid in
+  if conflict id then
+    next_ident_away_from_post_mangling (restart_subscript id) conflict
+  else id
+
 let next_name_away_with_default default na avoid =
   let id = match na with Name id -> id | Anonymous -> Id.of_string default in
   next_ident_away id avoid

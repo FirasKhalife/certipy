@@ -414,6 +414,21 @@ let ref_renaming_fun (k,r) =
   add_global_ids (Id.of_string s);
   s::l
 
+let py_ref_renaming_fun (k,r) =
+  let mp = modpath_of_r r in
+  let l = mp_renaming mp in
+  let s =
+    let idg = safe_basename_of_global r in
+    match l with
+    | [""] -> (* this happens only at toplevel of the monolithic case *)
+      let globs = get_global_ids () in
+      let id = py_next_ident_away idg globs in
+      Id.to_string id
+    | _ -> "MODULAR RENAMING:" ^ modular_rename k idg
+  in
+  add_global_ids (Id.of_string s);
+  s::l
+
 (* Cached version of the last function *)
 
 let ref_renaming =
@@ -421,6 +436,12 @@ let ref_renaming =
   fun ((k,r) as x) ->
     try if is_mp_bound (base_mp (modpath_of_r r)) then raise Not_found; get r
     with Not_found -> let y = ref_renaming_fun x in add r y; y
+
+let py_ref_renaming =
+  let add,get,_ = mktable_ref true in
+  fun ((k,r) as x) ->
+    try get r
+    with Not_found -> let y = py_ref_renaming_fun x in add r y; y
 
 (* [visible_clash mp0 (k,s)] checks if [mp0-s] of kind [k]
    can be printed as [s] in the current context of visible
@@ -591,7 +612,8 @@ let pp_haskell_gen k mp rls = match rls with
 let pp_global_with_key k key r =
   let ls = ref_renaming (k,r) in
   assert (List.length ls > 1);
-  let s = List.hd ls in
+  List.fold_left (fun s s' -> if String.is_empty s' then s else s^"."^s') (List.hd ls) (List.tl ls)
+  (* let s = List.hd ls in
   let mp,l = KerName.repr key in
   if ModPath.equal mp (top_visible_mp ()) then
     (* simplest situation: definition of r (or use in the same context) *)
@@ -604,8 +626,15 @@ let pp_global_with_key k key r =
       | JSON -> dottify (List.map unquote rls)
       | Haskell -> if modular () then pp_haskell_gen k mp rls else s
       | Ocaml -> pp_ocaml_gen k mp rls (Some l)
-      (* TODO *)
-      | Python -> pp_ocaml_gen k mp rls (Some l)
+      | Python -> assert false *)
+
+let str_py_global_with_key k key r =
+  let ls = py_ref_renaming (k,r) in
+  assert (List.length ls > 1);
+  (* FOR DEVELOPMENT PURPOSES ONLY *)
+  List.fold_left
+    (fun s s' -> if String.is_empty s' then s else s ^ "." ^ s')
+    (List.hd ls) (List.tl ls)
 
 let pp_global k r =
   pp_global_with_key k (repr_of_r r) r

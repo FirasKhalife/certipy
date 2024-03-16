@@ -153,10 +153,8 @@ let pp_py_get_var classname field =
 let pp_py_typevar name =
   name ++ str " = TypeVar('" ++ name ++ str "')"
 
-let pp_py_type_callable params args return =
-  if not params then str "Callable"
-  else
-    str "Callable[" ++
+let pp_py_type_callable args return =
+  str "Callable[" ++
     (if Int.equal (List.length args) 1 then List.hd args
     else pp_py_list identity args) ++ str ", " ++
     return ++ str "]"
@@ -170,11 +168,11 @@ let pp_py_funapp f args =
 let pp_py_raise exc msg =
   str ("raise " ^ exc ^ "(" ^ msg ^ ")")
 
-let pp_py_patmatch expr pbl =
+let pp_py_patmatch expr pat_br_list =
   v 4 (str "match " ++ expr ++ str ":" ++ fnl () ++
     prvect_with_sep fnl (fun (pat, body) -> v 4 (
       str "case " ++ pat ++ str ":" ++ fnl () ++ body
-    )) pbl
+    )) pat_br_list
   )
 
 let pp_ret ret s = if ret then (str "return " ++ s) else s
@@ -200,11 +198,10 @@ and pp_py_nest_single_helper_fun params args body =
   | x :: xs -> pp_py_helper_fun false params [x] (pp_py_nest_single_helper_fun [] xs body)
 
 and pp_py_helper_fun last params args body =
-  let name = fst (List.hd args) ++ str "_fun" in
-  pp_py_fundef params name args body ++ fnl () ++
+  let fun_name = fst (List.hd args) ++ str "_fun" in
+  pp_py_fundef params fun_name args body ++ fnl () ++
   (if last then fnl () else mt ()) ++
-  let args = List.map (fun (x, _) -> x) args in
-  pp_ret true (pp_py_lambda false args (pp_py_funapp name args))
+  pp_ret true fun_name
 
 let pp_py_fundef_with_var params var_name body =
   let fun_name = var_name ++ str "_fun" in

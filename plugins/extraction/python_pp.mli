@@ -58,8 +58,8 @@ val pp_py_typedef : Pp.t -> Pp.t -> Pp.t -> Pp.t
 (** pretty prints a type variable declaration *)
 val pp_py_typevar : Pp.t -> Pp.t
 
-(** pretty prints a callable type, possibly with generic parameters *)
-val pp_py_type_callable : bool -> Pp.t list -> Pp.t -> Pp.t
+(** pretty prints a callable type with generic parameters *)
+val pp_py_type_callable : Pp.t list -> Pp.t -> Pp.t
 
 (** pretty prints a function definition *)
 (* params -> name -> args -> body -> Pp.t *)
