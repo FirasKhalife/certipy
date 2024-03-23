@@ -43,6 +43,7 @@ val empty_env : unit -> env
 val rename_vars: Id.Set.t -> Id.t list -> env
 val rename_tvars: Id.Set.t -> Id.t list -> Id.t list
 val push_vars : Id.t list -> env -> Id.t list * env
+val py_push_vars : ?save_db:bool -> Id.t list -> env -> Id.t list * env
 val get_db_name : int -> env -> Id.t
 
 type phase = Pre | Impl | Intf
@@ -55,7 +56,7 @@ val opened_libraries : unit -> ModPath.t list
 type kind = Term | Type | Cons | Mod
 
 val pp_global_with_key : kind -> KerName.t -> GlobRef.t -> string
-val str_py_global_with_key : kind -> KerName.t -> GlobRef.t -> string
+val str_py_global_with_key : bool -> bool -> string -> kind -> KerName.t -> GlobRef.t -> string
 val pp_global : kind -> GlobRef.t -> string
 val pp_global_name : kind -> GlobRef.t -> string
 val pp_module : ModPath.t -> string

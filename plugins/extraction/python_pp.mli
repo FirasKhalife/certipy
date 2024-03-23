@@ -10,6 +10,12 @@ val sig_preamble : 'a -> Pp.t option -> Names.ModPath.t list
    to avoid indenting the intermediate blank line *)
 val cut2 : unit -> Pp.t
 
+(** returns the string field privatised as an Id *)
+val py_private_field : string -> Names.Id.t
+
+(** returns the Id field getter name as an Id *)
+val py_getter_from_private : Names.Id.t -> Names.Id.t
+
 (** pretty prints a type variable *)
 val pp_py_tvar : Names.Id.t -> Pp.t
 
@@ -34,20 +40,25 @@ val pp_py_nest_single_lambdas : Pp.t list -> Pp.t -> Pp.t
 (** pretty prints a class *)
 (* class name -> param list -> parent class names ->
     fieldnames -> fieldtypes -> if getters -> Pp.t *)
-val pp_py_class : Pp.t -> Names.Id.t list -> (Pp.t * Names.Id.t list) list
-                    -> string list -> Pp.t list -> bool -> Pp.t
+(* val pp_py_class : Pp.t -> Names.Id.t list -> (Pp.t * Names.Id.t list) list
+                    -> string list -> Pp.t list -> bool -> Pp.t *)
 
 (** pretty prints a dataclass *)
 (* class name -> param list -> parent class names ->
-    fieldnames -> fieldtypes -> if getters -> Pp.t *)
-val pp_py_dataclass : Pp.t -> Names.Id.t list -> (Pp.t * Names.Id.t list) list
-                        -> string list -> Pp.t list -> bool -> Pp.t
+    fieldnames -> fieldtypes -> getternames -> Pp.t *)
+val pp_py_dataclass : string -> Names.Id.t list -> (string * Names.Id.t list) list
+                        -> (Pp.t * Pp.t) list -> Pp.t list -> Pp.t
+
+val pp_py_empty_dataclass : string -> Names.Id.t list -> (string * Names.Id.t list) list -> Pp.t
 
 (** pretty prints creating an instance of a class *)
 val pp_py_instance : Pp.t -> Pp.t list -> Pp.t
 
+(** pretty prints a tuple *)
+val pp_py_tuple : Pp.t list -> Pp.t
+
 (** pretty prints a class alias *)
-val pp_py_alias : Pp.t -> string option -> Pp.t -> Pp.t
+val pp_py_alias : string -> string option -> string -> Pp.t
 
 (** pretty prints access to a variable via a getter *)
 val pp_py_get_var : Pp.t -> string -> Pp.t
@@ -62,8 +73,8 @@ val pp_py_typevar : Pp.t -> Pp.t
 val pp_py_type_callable : Pp.t list -> Pp.t -> Pp.t
 
 (** pretty prints a function definition *)
-(* params -> name -> args -> body -> Pp.t *)
-val pp_py_fundef : Pp.t list -> Pp.t -> (Pp.t * Pp.t option) list -> Pp.t -> Pp.t
+(* params -> names -> args -> body -> Pp.t *)
+val pp_py_fundef : Pp.t list -> Pp.t list -> (Pp.t * Pp.t option) list -> Pp.t -> Pp.t
 
 (** pretty prints a variable definition with lambdas *)
 val pp_py_vardef : Pp.t -> Pp.t list -> Pp.t -> Pp.t
@@ -89,13 +100,23 @@ val pp_ret : bool -> Pp.t -> Pp.t
      return lambda (a, b): a_fun(a, b)]
     the blank line between the body and the lambda shows only if the first argument is true
 *)
-val pp_py_helper_fun : bool -> Pp.t list -> (Pp.t * Pp.t option) list -> Pp.t -> Pp.t
+val pp_py_helper_fun : bool -> Pp.t list -> Pp.t -> Pp.t * Pp.t option -> Pp.t -> Pp.t
+
+(** returns a function name that would serve as a helper function from an id *)
+val py_fun_of_str : string -> string
+
+(** same as [py_fun_of_str] but takes an id *)
+val py_fun_of_id : Names.Id.t -> string
+
+(** same as [py_fun_of_str] but takes a ml_ident *)
+val py_fun_of_mlid : Extraction_plugin__Miniml.ml_ident -> string
+
 
 (** pretty prints successive helper functions of one argument *)
-val pp_py_nest_single_helper_fun : Pp.t list -> (Pp.t * Pp.t option) list -> Pp.t -> Pp.t
+val pp_py_nest_single_helper_fun : Pp.t list -> Pp.t list -> (Pp.t * Pp.t option) list -> Pp.t -> Pp.t
 
 (** pretty prints a function definition followed by *)
-val pp_py_fundef_with_var : Pp.t list -> Pp.t -> Pp.t -> Pp.t
+val pp_py_fundef_with_var : Pp.t list -> Pp.t -> Pp.t -> Pp.t -> Pp.t
 
 (** pretty prints an if expression
     e.g. [pp_py_ifthenelse cond then_ else_] will return

@@ -259,6 +259,27 @@ let mangle_id id =
     else Id.of_string (prfx ^ "0")
   else id
 
+let py_mangle_id snake_case prfx (mp,id) =
+  let cat_prfx prfx id = Id.of_string (
+    if snake_case then (String.uncapitalize_ascii prfx) ^ "_" ^ id
+    else (String.capitalize_ascii prfx) ^ id)
+  in
+  if not (String.is_empty prfx)
+  then
+    let id = Id.to_string id in
+    if String.length id > String.length prfx
+      && String.sub id 0 (String.length prfx) = prfx
+    then Id.of_string id
+    else cat_prfx prfx id
+  else
+    let split_mp = String.split_on_char '.' (ModPath.to_string mp) in
+    let prfx = List.last split_mp in
+    let id = Id.to_string id in
+    if String.length id > String.length prfx
+      && String.sub id 0 (String.length prfx) = prfx
+    then Id.of_string id
+    else cat_prfx prfx id
+
 (* Looks for next "good" name by lifting subscript *)
 
 let next_ident_away_from_post_mangling id bad =
@@ -379,11 +400,24 @@ let next_ident_away id avoid =
     next_ident_away_from_post_mangling (restart_subscript id) (fun id -> Id.Set.mem id avoid)
   else id
 
-let py_next_ident_away id avoid =
-  let conflict id = Id.Set.mem id avoid in
-  if conflict id then
-    next_ident_away_from_post_mangling (restart_subscript id) conflict
-  else id
+let remove_single_quotes (s: string) : string =
+  Str.global_replace (Str.regexp "'") "" s
+
+let py_next_ident_away snake_case prfx (mp, id) avoid =
+  (* remove single quotes *)
+  let id_str = remove_single_quotes (Id.to_string id) in
+  (* adjust capitalization *)
+  let id = Id.of_string (
+    if snake_case then String.uncapitalize_ascii id_str
+    else String.capitalize_ascii id_str) in
+  if not (Id.Set.mem id avoid) then id
+  else
+    (* add module or prefix to id *)
+    let id = py_mangle_id snake_case prfx (mp, id) in
+    if not (Id.Set.mem id avoid) then id
+    else
+      (* add subscript *)
+      next_ident_away_from_post_mangling (restart_subscript id) (fun id -> Id.Set.mem id avoid)
 
 let next_name_away_with_default default na avoid =
   let id = match na with Name id -> id | Anonymous -> Id.of_string default in
