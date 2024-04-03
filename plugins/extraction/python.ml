@@ -21,13 +21,39 @@ open Mlutil
 open Modutil
 open Common
 open Python_pp
+open Python_ast
 
 let starting_sym = Char.code 'a' - 1
 let r = ref (starting_sym)
 let reset_gensym () = r := starting_sym
 let gensym () = incr r; String.make 1 (Char.chr !r)
 
-let fst3 (a,_,_) = a
+module StringMap = Map.Make(String)
+module RefMap = GlobRef.Map
+
+(** a map of record field names to their getter name,
+    in order to use the getter with its name possibly changed for renaming purposes *)
+let getter_map = ref StringMap.empty
+
+let add_getter_map key value = getter_map := StringMap.add key value !getter_map
+
+let find_getter_map key = StringMap.find key !getter_map
+
+(** a map of record constructors refs to their type ref,
+   in order to use the record type only in the extracted code *)
+let record_map = ref RefMap.empty
+
+let add_record_map key value = record_map := RefMap.add key value !record_map
+
+let find_record_map key = RefMap.find key !record_map
+
+(** returns Type and the type ref of the constructor if the constructor ref is found ,
+    else Cons and the constructor itself *)
+let type_if_record_cons key =
+  try Type, find_record_map key
+  with Not_found -> Cons, key
+
+(* let fst3 (a,_,_) = a *)
 
 let tl_empty = function
   | [] -> []
@@ -37,29 +63,20 @@ let cut2_infix_if_both a1 a2 = a1 ++ (if Pp.ismt a1 || Pp.ismt a2 then mt () els
 
 let axiom_not_realized_msg = "AXIOM TO BE REALIZED"
 
+let push_args_lam_fun_names ids env =
+  let fun_names, env =
+    py_push_vars ~save_db:false (List.map (fun id ->  py_fun_of_str id) ids) env in
+  fun_names, env
+
 let push_args_fun_names args env =
   let fun_names, env =
-    py_push_vars ~save_db:false (List.map (fun a -> Id.of_string (py_fun_of_id (fst a))) args) env in
+    py_push_vars ~save_db:false (List.map (fun a ->  py_fun_of_str (fst a)) args) env in
   fun_names, env
 
 let push_var_fun_name id env =
-  let fun_name, env = py_push_vars ~save_db:false [Id.of_string (py_fun_of_id id)] env in
-  let fun_name = Id.print (List.hd fun_name) in
+  let fun_name, env = py_push_vars ~save_db:false [py_fun_of_str id] env in
+  let fun_name = List.hd fun_name in
   fun_name, env
-
-module Record_Map = GlobRef.Map
-
-(** a map of record constructors refs to their type ref,
-   in order to only use the record type only in the extracted code *)
-let record_map = ref Record_Map.empty
-
-let add_rec_map key value = record_map := Record_Map.add key value !record_map
-
-(** returns Type and the type ref of the constructor if the constructor ref is found ,
-    else Cons and the constructor itself *)
-let type_if_record_cons key =
-  try Type, Record_Map.find key !record_map
-  with Not_found -> Cons, key
 
 (* from the Python Language Reference 3.12.1, "Identifiers and Keywords" *)
 let keywords =
@@ -103,35 +120,6 @@ let str_field r fields i = str_one_field r i (List.nth fields i)
 
 let str_fields r fields = List.map_i (str_one_field r) 0 fields
 
-let pp_type vl t =
-  let rec pp_type_rec = function
-    | Tmeta _ | Tvar' _ | Taxiom -> assert false
-    | Tvar i -> (try pp_py_tvar (List.nth vl (pred i))
-                 with Failure _ -> (str "A" ++ int i))
-    | Tglob (r,[]) -> pp_global ~snake_case:false Type r
-    | Tglob (r,l) ->
-        pp_global ~snake_case:false Type r ++ pp_py_generics identity (List.map pp_type_rec l)
-    | Tarr (t1, t2) ->
-        pp_py_type_callable [pp_type_rec t1] (pp_type_rec t2)
-    | Tdummy _ -> str "__"
-    | Tunknown -> str "__"
-  in
-  hov 0 (pp_type_rec t)
-
-let get_type_params t =
-  let rec get_params_rec acc = function
-    | Tmeta _ | Tvar' _ | Taxiom -> acc
-    | Tdummy _ | Tunknown -> acc
-    | Tvar i ->
-        if not (List.exists (Int.equal i) acc) then i :: acc
-        else acc
-    | Tglob (_,l) ->
-        if not (List.is_empty l) then List.fold_left (get_params_rec) acc l
-        else acc
-    | Tarr (a1,a2) -> get_params_rec (get_params_rec acc a1) a2
-  in
-  get_params_rec [] t
-
 let is_bool_patt p s =
   try
     let r = match p with
@@ -146,139 +134,159 @@ let is_ifthenelse = function
   | [|([],p1,_);([],p2,_)|] -> is_bool_patt p1 "True" && is_bool_patt p2 "False"
   | _ -> false
 
-(** in_fun specifies if the term is already inside a function *)
-let rec pp_definition in_fun env params fun_names args def def_term : Pp.t =
-  let is_fun = is_pystatement_rec env def_term in
-  (* no args, pystatement -> extracted as function then stored in a variable *)
-  if List.is_empty args && is_fun then
-    let var_name = List.hd fun_names in
-    let fun_name, env = push_var_fun_name var_name env in
-    pp_py_fundef_with_var params (Id.print var_name) fun_name def
+let rec extract_definition_top original_env name t a =
+  let bl,a' = collect_lams a in
+  let is_fun = is_pystatement_rec a' in
+  (* not a py_statement and no args -> extracted as a variable*)
+  if not is_fun && List.is_empty bl then
+    let expr, _, env = extract_expr original_env a' in
+    PyAssign (name, expr), env
   else
-    let fun_names = List.map Id.print fun_names in
-    (* no args, no pystatement -> extracted as a variable *)
-    if List.is_empty args && not is_fun then
-      let var_name = List.hd fun_names in
-      pp_py_vardef var_name [] def
-    else
-      (* args -> extracted as a function *)
-      pp_py_fundef params fun_names args def
+    (* py_statement or args -> extracted as a function *)
+    let bl,env = py_push_vars (List.map id_of_mlid bl) original_env in
+    let tv, params =
+      match t with
+      | None -> [||], []
+      | Some t ->
+          Array.map_of_list (extract_type []) (fst (collect_tarrs t)),
+          (* List.fold_left (fun xs x -> if List.mem x xs then xs else x :: xs) [] |> *)
+          List.map (fun i -> PyTypeId ("A" ^ string_of_int i)) (get_type_params t)
+    in
+    let args =
+      List.rev (
+        List.mapi (fun i id -> id, if i < Array.length tv then Some tv.(i) else None) bl)
+    in
+    let fun_names, env = push_args_fun_names (tl_empty args) env in
+    let fun_args = List.combine (fun_names) (tl_empty args) in
+    let body_stmt, env = extract_stmt env a' in
+    let first_arg = if List.is_empty args then [] else [List.hd args] in
+    PyFunDef (name, params, first_arg, nest_fundefs fun_args body_stmt), original_env
 
-and pp_letin env params fun_names args def body def_term =
-  pp_definition true env params fun_names args def def_term ++ fnl () ++ body
+and extract_definition env name t a =
+  let bl,a' = collect_lams a in
+  let is_fun = is_pystatement_rec a' in
+  (* if no args *)
+  if is_fun && List.is_empty bl then
+    (* no args, pystatement -> extracted as function then stored in a variable *)
+    let fun_name, outer_env = push_var_fun_name name env in
+    let stmt, env = extract_stmt env a' in
+    PyFunDef (fun_name, [], [], stmt)
+    :: PyAssign (name, (PyApp (PyId fun_name, [])))
+    :: [], outer_env
+  else
+    let stmt, outer_env = extract_definition_top env name t a in
+    [stmt], outer_env
 
-and is_pystatement env = function
+and extract_type vl : ml_type -> py_type = function
+  | Tmeta _ | Tvar' _ | Taxiom -> assert false
+  | Tvar i ->
+      (try PyTypeId (Id.to_string (List.nth vl (pred i)))
+        with Failure _ -> PyTypeId ("A" ^ string_of_int i))
+  | Tglob (r,[]) ->
+      PyTypeId (str_global ~snake_case:false Type r)
+  | Tglob (r,l) ->
+      PyTypeGeneric (str_global ~snake_case:false Type r, List.map (extract_type vl) l)
+  | Tarr (t1, t2) ->
+      (* Callable[t1, t2] *)
+      PyTypeGeneric ("Callable", extract_type vl t1 :: extract_type vl t2 :: [])
+  | Tdummy _ -> PyTypeId "__"
+  | Tunknown -> PyTypeId "__"
+
+and get_type_params t =
+  let rec get_params_rec acc = function
+    | Tmeta _ | Tvar' _ | Taxiom -> acc
+    | Tdummy _ | Tunknown -> acc
+    | Tvar i ->
+        if not (List.exists (Int.equal i) acc) then i :: acc
+        else acc
+    | Tglob (_,l) ->
+        if not (List.is_empty l) then List.fold_left (get_params_rec) acc l
+        else acc
+    | Tarr (a1,a2) -> get_params_rec (get_params_rec acc a1) a2
+  in
+  List.rev (get_params_rec [] t)
+
+and is_pystatement = function
 | MLfix _ | MLexn _ | MLaxiom | MLletin _ -> true
-| MLlam _ as a -> is_pystatement env (snd (collect_lams a))
-| MLmagic a -> is_pystatement env a
-| MLcase (typ, t, pv) -> not (is_record_proj typ t pv) && not (is_ifthenelse pv)
+| MLlam _ as a -> is_pystatement (snd (collect_lams a))
+| MLmagic a -> is_pystatement a
+| MLcase (typ, t, pv) ->
+    not (is_custom_match pv)
+    && not (is_ifthenelse pv)
+    && not (is_record_proj typ t pv)
 | _ -> false
 
-and is_pystatement_rec env = function
+and is_pystatement_rec = function
   | MLfix _ | MLexn _ | MLaxiom -> true
-  | MLletin (_, a1, a2) -> is_pystatement_rec env a1 || is_pystatement_rec env a2
-  | MLlam _ as a -> is_pystatement_rec env (snd (collect_lams a))
-  | MLapp (f, args) -> is_pystatement_rec env f || List.exists (is_pystatement_rec env) args
-  | MLcons (_,_, args) -> List.exists (is_pystatement_rec env) args
-  | MLmagic a -> is_pystatement_rec env a
+  | MLletin (_, a1, a2) -> is_pystatement_rec a1 || is_pystatement_rec a2
+  | MLlam _ as a -> is_pystatement_rec (snd (collect_lams a))
+  | MLapp (f, args) -> is_pystatement_rec f || List.exists (is_pystatement_rec) args
+  | MLcons (_,_, args) -> List.exists is_pystatement_rec args
+  | MLmagic a -> is_pystatement_rec a
   | MLcase (typ, t, pv) ->
-      not (is_record_proj typ t pv) && not (is_ifthenelse pv)
+      not (is_custom_match pv)
+      && not (is_ifthenelse pv)
+      && not (is_record_proj typ t pv)
   | _ -> false
 
-and extract_statement ret env expr =
-  if not (is_pystatement env expr) then pp_expr ret env expr
+and expr_to_stmt env expr : py_expr * py_stmt list * env =
+  if not (is_pystatement expr) then extract_expr env expr
   else
     match expr with
     | MLlam (id, a) ->
       let arg, env' = py_push_vars [id_of_mlid id] env in
-      let pp_expr, stmt, env' = pp_expr ret env' a in
+      let body_stmt, _ = extract_stmt env' a in
       let arg = List.hd arg in
       let fun_name, env = push_args_fun_names [(arg, None)] env in
-      let fun_name = Id.print (List.hd fun_name) in
-      fun_name, pp_py_fundef [] [fun_name] [(Id.print arg, None)] (cut2_infix_if_both stmt pp_expr), env
+      let fun_name = List.hd fun_name in
+      PyId fun_name,
+      [PyStmtTop (PyFunDef (fun_name, [], [(arg, None)], body_stmt))],
+      env
     | _ ->
-      let pp_expr, stmt, env = pp_expr ret env expr in
-      let name_stmt, env' = py_push_vars ~save_db:false [Id.of_string "x"] env in
-      let name_stmt = Id.print (List.hd name_stmt) in
-      pp_py_funapp name_stmt [],
-      pp_py_fundef [] [name_stmt] [] (cut2_infix_if_both stmt pp_expr),
-      env'
+      let expr_stmt, env = extract_stmt env expr in
+      let stmt_name, env = py_push_vars ~save_db:false [Id.of_string "_aux_fun"] env in
+      let stmt_name = List.hd stmt_name in
+      PyApp (PyId stmt_name, []),
+      [PyStmtTop (PyFunDef (stmt_name, [], [], expr_stmt))],
+      env
 
-and map_extract_statement ret env = function
-  | [] -> [], mt (), env
-  | x :: xs ->
-      let x, stmt_x, env = extract_statement ret env x in
-      let xs, stmt_xs, env = map_extract_statement ret env xs in
-      (x :: xs), (cut2_infix_if_both stmt_x stmt_xs), env
+and map_expr_to_stmt env = function
+  | [] -> [], [], env
+  | exp :: exps ->
+      let py_exp, exp_stmt, env = expr_to_stmt env exp in
+      let py_exps, exps_stmt, env = map_expr_to_stmt env exps in
+      (py_exp :: py_exps), (exp_stmt @ exps_stmt), env
 
-and pp_expr ret env = function
-  | MLrel n ->
-      let id = get_db_name n env in
-      let id = if Id.equal id dummy_name then Id.of_string "__" else id in
-      pp_ret ret (Id.print id), mt (), env
-  | MLapp (f,args') ->
-      let needs_par = match f with MLlam _ -> true | _ -> false in
-      let ret = ret && (match f with MLfix _ -> false | _ -> true) in
-      let def, stmt_f, env = extract_statement false env f in
-      let args, stmt_args, env = map_extract_statement false env args' in
-      let stmt = cut2_infix_if_both stmt_f stmt_args in
-      pp_ret ret (pp_py_funapp (pp_par needs_par def) args), stmt, env
+and extract_stmt env = function
+  | MLrel _ | MLglob _
+  | MLapp _ | MLcons _ | MLtuple _
+  | MLuint _ | MLfloat _ | MLparray _ as exp ->
+      let py_exp, stmts, env = extract_expr env exp in
+      stmts @ [PyStmtFunDef (PyReturn py_exp)], env
   | MLlam _ as a ->
-      let fl,a' = collect_lams a in
-      let fl,env' = py_push_vars (List.map id_of_mlid fl) env in
-      let body, stmt, env' = pp_expr true env' a' in
-      if not (Pp.ismt stmt) || is_pystatement_rec env a'
-        then
-          let fun_names , env' =
-            push_args_fun_names (List.map (fun a -> (a, None)) fl) env'
-          in
-          pp_py_nest_single_helper_fun [] (List.map Id.print fun_names)
-            (List.rev (List.map (fun id -> (Id.print id, None)) fl))
-            (cut2_infix_if_both stmt body),
-          mt (), env
-        else
-          pp_ret ret (
-            pp_py_nest_single_lambdas
-              (List.rev (List.map Id.print fl)) (fst3 (pp_expr false env' a'))),
-          mt (), env
-  | MLletin (id,a1,a2) ->
-      let id,env' = py_push_vars [id_of_mlid id] env in
-      let fl,a1 = collect_lams a1 in
-      let fl,env = py_push_vars (List.map id_of_mlid fl) env
-      in
-      let args = List.map (fun id -> (id, None)) fl in
-      let fun_names, env = push_args_fun_names (tl_empty args) env in
-      let args = List.map (fun (a, t) -> (Id.print a, t)) args
-      in
-      let pp_a1, stmt1, env = pp_expr false env a1 in
-      let pp_a2, stmt2, env' = pp_expr ret env' a2 in
-      pp_letin env [] (List.hd id :: fun_names) args
-        (cut2_infix_if_both stmt1 pp_a1) (cut2_infix_if_both stmt2 pp_a2) a1, mt (), env'
-  | MLglob r -> pp_ret ret (pp_global Term r), mt (), env
+      let ids,a' = collect_lams a in
+      let ids,env' = py_push_vars (List.map id_of_mlid ids) env in
+      let fun_names,env' = push_args_lam_fun_names ids env' in
+      let args = List.map (fun id -> (id, None)) ids in
+      let body, _ = extract_stmt env' a' in
+      nest_fundefs (List.combine fun_names args) body, env
+  | MLletin (mlid,a1,a2) ->
+      (* get the renamed id in the initial env without passing it to a1 *)
+      let id, _ = py_push_vars [id_of_mlid mlid] env in
+      let id = List.hd id in
+      let py_a1, env = extract_definition env id None a1 in
+      (* get renamed id in the env returned by a1, pass it to a2 *)
+      let id, env = py_push_vars [id_of_mlid mlid] env in
+      let py_a2, env = extract_stmt env a2 in
+      let let_in_def = List.map (fun stmt -> PyStmtTop stmt) py_a1 in
+      let_in_def @ py_a2, env
   | MLfix (i,ids,defs) ->
-      let ids',env' = py_push_vars (List.rev (Array.to_list ids)) env in
-      pp_fix env' i (Array.of_list (List.rev ids'), defs), mt (), env'
-  | MLexn s -> pp_py_raise "Exception" s, mt (), env
-  | MLdummy k -> pp_ret ret (str "__"), mt (), env
-  | MLmagic a -> pp_expr ret env a
-  | MLaxiom -> pp_py_raise "Exception" axiom_not_realized_msg, mt (), env
-  | MLcons (_,r,a) ->
-      let kn, r = type_if_record_cons r in
-      if List.is_empty a then
-      pp_ret ret (pp_py_instance (pp_global ~snake_case:false kn r) []), mt (), env
-      else
-        let fds = get_record_fields r in
-        if not (List.is_empty fds) then
-          let args, stmts, env = map_extract_statement false env a in
-          pp_ret ret (pp_cons_pat r args), stmts, env
-        else
-          let args, stmts, env = map_extract_statement false env a in
-          (* if String.is_empty (str_global kn r) (* hack Extract Inductive prod *)
-          then pp_ret ret (pp_tuple identity args)
-          else *) pp_ret ret (pp_py_instance (pp_global ~snake_case:false kn r) args), stmts, env
-  | MLtuple l ->
-      let args, stmts, env = map_extract_statement false env l in
-      pp_ret ret (pp_py_tuple args), stmts, env
+      let ids',env = py_push_vars (List.rev (Array.to_list ids)) env in
+      extract_fix env i (Array.of_list (List.rev ids'), defs), env
+  | MLexn s -> [PyStmtTop (PyRaise ("Exception", s))], env
+  | MLdummy k -> [PyStmtFunDef (PyReturn (PyId "__"))], env
+  | MLmagic a -> extract_stmt env a
+  | MLaxiom -> [PyStmtTop (PyRaise ("Exception", axiom_not_realized_msg))], env
   | MLcase (_, t, pv) when is_custom_match pv ->
       if not (is_regular_match pv) then
         user_err Pp.(str "Cannot mix yet user-given match and general patterns.");
@@ -287,44 +295,89 @@ and pp_expr ret env = function
         if not (List.is_empty ids) then named_lams (List.rev ids) e
         else dummy_lams (ast_lift 1 e) 1
       in
-      (* pp_expr the MLlams with a new line *)
-      let pp_branch tr = pp_expr false env (mkfun tr) in
-      let head, stmt_head, env = pp_expr false env t in
-      let res =
-        (* head lambda function, comes raw from user input *)
-        pp_par true (str (find_custom_match pv)) ++ fnl () ++
-        (* each branch followed by a comma and a new line *)
-        pp_par true (
-          (prvect (fun br -> fst3 (pp_branch br) ++ str "," ++ fnl()) pv) ++
-          (* the matched expression *)
-          head)
+      let rec extract_br i env acc_br acc_stmt =
+        begin
+          if i == Array.length pv then acc_br, acc_stmt, env
+          else
+            let py_exp, stmt, env = extract_expr env (mkfun pv.(i)) in
+            extract_br (i + 1) env (py_exp :: acc_br) (stmt @ acc_stmt)
+        end
       in
-      v 4 res, stmt_head, env
+      let py_exp, py_stmt, env = extract_br 0 env [] [] in
+      let branches, stmts = List.rev py_exp, List.rev py_stmt in
+      let head, stmt_head, env = extract_expr env t in
+      let input = find_custom_match pv in
+      stmts @ [PyStmtFunDef (PyMatchCustom (head, branches, input))], env
   | MLcase (typ, t, pv) ->
-    (* First, can this match be printed as a mere record projection ? *)
-    (try
-      let rec_proj, stmt, env = pp_record_proj true env typ t pv in
-      pp_ret ret rec_proj, stmt, env
+    begin
+      try
+        let expr, stmts, env = extract_record_proj true env typ t pv in
+        stmts @ [PyStmtFunDef (PyReturn (expr))], env
       with Impossible ->
-        let head, stmt, env = pp_expr false env t in
-        (* Can this match be printed as [if ... then ... else] ? *)
-        (try
-          let if_cond, stmt, env = pp_ifthenelse env head pv in
-          pp_ret ret if_cond, stmt, env
+        let head, stmt, env = extract_expr env t in
+        begin
+          try
+            let expr, stmts, env = extract_ifthenelse env head pv in
+            stmt @ stmts @ [PyStmtFunDef (PyReturn (expr))], env
           with Not_found ->
-            (* Otherwise, standard match *)
-            let pat = pp_pat env pv in
-            pp_py_patmatch head pat, stmt, env))
-  | MLuint i -> (* TODO *) str "MLuint", mt (), env
-  | MLfloat f -> (* TODO *) str "MLfloat", mt (), env
-  | MLparray(t,def) -> (* TODO *) str "MLparray", mt (), env
+            (* standard match *)
+            let head, stmt, env = extract_expr env t in
+            let branches = extract_pat env pv in
+            stmt @ [PyStmtFunDef (PyMatchFun (head, branches))], env
+        end
+    end
+
+and extract_expr env : ml_ast -> py_expr * py_stmt list * env = function
+  | MLaxiom | MLexn _
+  | MLletin _ | MLfix _ -> assert false
+  | MLcase (_,_,pv) when is_custom_match pv -> assert false
+  | MLrel n ->
+      let id = get_db_name n env in
+      let id = if Id.equal id dummy_name then "__" else Id.to_string id in
+    PyId id, [], env
+  | MLapp (f,args) ->
+      let expr, f_stmt, env = expr_to_stmt env f in
+      let args_expr, args_stmt, env = map_expr_to_stmt env args in
+      let stmt = f_stmt @ args_stmt in
+    PyApp (expr, args_expr), stmt, env
+  | MLlam _ as a ->
+      let ids,a' = collect_lams a in
+      let ids,env' = py_push_vars (List.map id_of_mlid ids) env in
+      let body, stmt, _ = extract_expr env' a' in
+      nest_lams ids body, stmt, env
+  | MLglob r -> PyId (str_global Term r), [], env
+  | MLdummy k -> PyId "__", [], env
+  | MLmagic a -> extract_expr env a
+  | MLcons (_,r,a) ->
+      let kn, r = type_if_record_cons r in
+      let args, stmts, env = map_expr_to_stmt env a in
+    PyCons (PyId (str_global ~snake_case:false kn r), args), stmts, env
+  | MLtuple l ->
+      let args, stmts, env = map_expr_to_stmt env l in
+    PyTuple args, stmts, env
+  | MLcase (typ, t, pv) ->
+      begin
+        try extract_record_proj true env typ t pv
+        with Impossible ->
+          let head, stmt, env = extract_expr env t in
+          begin
+            try extract_ifthenelse env head pv
+            with Not_found -> assert false
+          end
+      end
+  | MLuint i -> assert false
+      (* TODO str "MLuint", mt (), env *)
+  | MLfloat f -> assert false
+      (* TODO str "MLfloat", mt (), env *)
+  | MLparray(t,def) -> assert false
+      (* TODO str "MLparray", mt (), env *)
 
 and is_record_proj typ t pv =
-  try ignore (pp_record_proj false (empty_env ()) typ t pv); true
+  try ignore (extract_record_proj false (empty_env ()) typ t pv); true
   with Impossible -> false
 
 (* pretty print * env * MLcase type * expression to match * branches * args *)
-and pp_record_proj pp env typ t pv =
+and extract_record_proj extract env typ t pv : py_expr * py_stmt list * env =
   (* Can a match be printed as a mere record projection ? *)
   let fields = record_fields_of_type typ in
   (* if no fields then Impossible *)
@@ -359,312 +412,338 @@ and pp_record_proj pp env typ t pv =
     | Pcons (r, l) -> r, lookup_rel rel_i 0 l
     | _ -> raise Impossible
   in
-  if not pp then mt (), mt (), env
+  if not extract then PyId "", [], env
   else
-    let pp_head, stmt_head, env = pp_expr false env t in
-    (* pp_expr of MLapp args (could be empty) *)
-    let pp_args, stmt_args, env = map_extract_statement false env a in
+    (* first id of the field access chain (typically the class instance id) *)
+    let py_left, left_stmt, env = extract_expr env t in
     (* field getter *)
-    let pp_head = pp_py_get_var pp_head (str_field r fields idx)
-    in
-    pp_py_funapp pp_head pp_args, stmt_head ++ stmt_args, env
+    let getter = find_getter_map(str_field r fields idx) in
+    (* MLapp args (could be empty) *)
+    let args, args_stmts, env = map_expr_to_stmt env a in
+    PyApp (PyFieldAccess (py_left, [getter]), args),
+      left_stmt @ args_stmts, env
 
-(*
-  pretty print constructor pattern
-  (Pcons of GlobeRef.t * ml_pattern list)
-*)
-and pp_cons_pat r ppl : Pp.t =
-  (* if String.is_empty (str_global Cons r) then
-    pp_boxed_tuple identity ppl (* Hack Extract Inductive prod *)
-  else *)
-    let kn, r = type_if_record_cons r in
-    (* records and inductive type constructors are extracted the same *)
-    pp_py_instance (pp_global ~snake_case:false kn r) ppl
+and nest_fundefs fun_args body =
+  match fun_args with
+    | [] -> body
+    | (name, arg) :: [] -> [PyStmtTop (PyFunDef (name, [], [arg], body))]
+    | (name, arg) :: args' -> [PyStmtTop (PyFunDef (name, [], [arg], nest_fundefs args' body))]
 
-(* consecutive patterns with a same body are considered as different patterns,
-   each wil have its own body (duplicated body)
-*)
-and pp_gen_pat ids env = function
-  (* constructor: pp_gen each argument, then pp_cons the whole *)
-  | Pcons (r, l) -> pp_cons_pat r (List.map (pp_gen_pat ids env) l)
-  (* Shortcut to Pcons with De Bruijn indices: Pcons (r,[Prel n;...;Prel 1]) *)
-  | Pusual r -> pp_cons_pat r (List.map Id.print ids)
-  (* print tuple from generated pattern list *)
-  | Ptuple l -> pp_boxed_tuple (pp_gen_pat ids env) l
-  (* print wildcard pattern *)
-  | Pwild -> str "_"
-  (* search for lambda term with De Bruijn index n in env and print it *)
-  | Prel n -> Id.print (get_db_name n env)
+and nest_lams args body =
+  match args with
+  | [] -> body
+  | arg :: args' -> PyLam ([arg], nest_lams args' body)
 
-and pp_ifthenelse env expr pv = match pv with
+and extract_cons_pat r ppl =
+  let kn, r = type_if_record_cons r in
+  (* records and inductive type constructors are extracted the same *)
+  PyCons (PyId (str_global ~snake_case:false kn r), ppl)
+
+and extract_gen_pat ids env = function
+(* constructor: pp_gen each argument, then pp_cons the whole *)
+| Pcons (r, l) -> extract_cons_pat r (List.map (extract_gen_pat ids env) l)
+(* Shortcut to Pcons with De Bruijn indices: Pcons (r,[Prel n;...;Prel 1]) *)
+| Pusual r -> extract_cons_pat r ids
+(* print tuple from generated pattern list *)
+| Ptuple l -> PyTuple (List.map (extract_gen_pat ids env) l)
+(* print wildcard pattern *)
+| Pwild -> PyId "_"
+(* search for lambda term with De Bruijn index n in env and print it *)
+| Prel n -> PyId (Id.to_string (get_db_name n env))
+
+and extract_ifthenelse env expr pv = match pv with
   | [|([],tru,the);([],fal,els)|] when
       (is_bool_patt tru "True") && (is_bool_patt fal "False")
       ->
-      let pp_then, stmt_the, env = pp_expr false env the in
-      let pp_else, stmt_els, env = pp_expr false env els in
-      pp_py_ifthenelse expr pp_then pp_else, stmt_the ++ stmt_els, env
+      let py_then, stmt_then, env = extract_expr env the in
+      let py_else, stmt_else, env = extract_expr env els in
+      PyIfExpr (expr, py_then, py_else), stmt_then @ stmt_else, env
   | _ -> raise Not_found
 
-(* env * (ids, pattern, body) => pp pattern * pp_expr body *)
-and pp_pat env pv =
-  let rec pp_one_pat i acc env pv =
+and extract_pat env pv =
+  let rec extract_one_pat i acc env pv =
     if i == (Array.length pv) then acc
     else
       let ids, pat, t = pv.(i) in
-      let ids',env = py_push_vars (List.rev_map id_of_mlid ids) env in
-      let body, stmt_body, env = pp_expr true env t in
+      let ids,env = py_push_vars (List.rev_map id_of_mlid ids) env in
+      let ids = List.rev_map (fun id -> PyId id) ids in
+      let stmt_body, env = extract_stmt env t in
       let acc =
-        (pp_gen_pat (List.rev ids') env pat, cut2_infix_if_both stmt_body body) :: acc
+        (extract_gen_pat ids env pat, stmt_body) :: acc
       in
-      pp_one_pat (i+1) acc env pv
+      extract_one_pat (i+1) acc env pv
   in
-  Array.rev_of_list (pp_one_pat 0 [] env pv)
+  List.rev (extract_one_pat 0 [] env pv)
 
-and pp_function env name type_opt a =
-  let bl,a' = collect_lams a in
-  let tl =
-    match type_opt with
-    | None -> []
-    | Some t -> fst (collect_tarrs t)
+and extract_fix env i (ids,bl) : py_stmt list =
+  let funs =
+    Array.map2
+      (fun id b -> fst (extract_definition env id None b))
+      ids bl |>
+    Array.to_list |>
+    List.flatten
   in
-  let tv, tv_len = Array.of_list tl, List.length tl in
-  let bl,env = py_push_vars (List.map id_of_mlid bl) env in
-  let map_args i id = id, if i < tv_len then (Some (pp_type [] tv.(i))) else None in
-  let args = List.rev (List.mapi map_args bl)
-  in
-  let fun_names, env = push_args_fun_names (tl_empty args) env in
-  let args = List.map (fun (a, t) -> (Id.print a, t)) args
-  in
-  let params =
-    List.flatten (List.map get_type_params tl) |>
-    List.fold_left (fun xs x -> if List.mem x xs then xs else x :: xs) [] |>
-    List.map (fun i -> str "A" ++ int i)
-  in
-  let ret = (is_pystatement_rec env a') || not (List.is_empty bl) in
-  let body, stmt, env' = pp_expr ret env a' in
-  let body = if Pp.ismt stmt then body else (stmt ++ cut2 () ++ body) in
-  (params, name :: fun_names, args, a', body)
+  (List.map (fun f -> PyStmtTop f) funs)
+  @ [PyStmtFunDef (PyReturn (PyId ids.(i)))]
 
-(*s names of the functions ([ids]) are already pushed in [env],
-    and passed here just for convenience. *)
-
-and pp_fix env i (ids,bl) =
-  prvecti
-    (fun i (id, (params, fun_names, args, body, pp_body)) ->
-      let id, env = py_push_vars [id] env in
-      let var_name = Id.print (List.hd id) in
-      (if i = 0 then mt () else cut2 ()) ++
-      if not (List.is_empty args)
-      then
-        let fun_names = List.map Id.print fun_names in
-        pp_py_fundef params (var_name :: fun_names) args pp_body
-      else
-        let fun_name, env = push_var_fun_name (List.hd id) env in
-        pp_py_fundef_with_var params var_name fun_name pp_body)
-    (Array.map2 (fun id b -> (id, pp_function env id None b)) ids bl) ++
-  pp_ret true (Id.print ids.(i))
-
-(*s Pretty-printing of [Dfix] *)
-
-let pp_Dfix (rv,c,t) =
-  (* name of every fix to print *)
-  let names = Array.map
-    (fun r -> if is_inline_custom r then "" else str_global Term r) rv
-  in
-  let rec pp_one_Dfix init env i =
-    if i = Array.length rv then mt ()
+let extract_Dfix rv c t : py_stmt_top list =
+  let rec extract_rec env i : py_stmt_top list =
+    if i = Array.length rv then []
     else
+      let fix_name = if is_inline_custom rv.(i) then "" else str_global Term rv.(i) in
       (* void if inline_custom or (not_custom but unused) -> do not extract it *)
-      let void = is_inline_custom rv.(0) ||
-        (not (is_custom rv.(0)) &&
+      let void = is_inline_custom rv.(i) ||
+        (not (is_custom rv.(i)) &&
           match c.(i) with MLexn "UNUSED" -> true | _ -> false)
       in
-      if void then pp_one_Dfix init env (i+1)
-      else
-        (if init then mt () else cut2 ()) ++
-        (if is_custom rv.(0) then
-          v 4 (str "def " ++ str names.(i) ++ str "():" ++ fnl () ++
-            str (find_custom rv.(0)))
+      begin
+        if void then extract_rec env (i+1)
         else
-          let params, fun_names, args, body, pp_body =
-            pp_function (empty_env ()) (Id.of_string names.(i)) (Some t.(i)) c.(i) in
-          if not (List.is_empty args) then
-            let fun_names = List.map Id.print fun_names in
-            pp_py_fundef params (str names.(i) :: fun_names) args pp_body
-          else
-            let fun_name, env = push_var_fun_name (Id.of_string names.(i)) env in
-            pp_py_fundef_with_var params (str names.(i)) fun_name pp_body) ++
-        pp_one_Dfix false env (i+1)
+          let def =
+            if is_custom rv.(i) then [PyCustomFunDef (fix_name, (find_custom rv.(i)))]
+            else [fst (extract_definition_top env fix_name (Some t.(i)) c.(i))]
+          in
+          extract_rec env (i+1) @ def
+      end
   in
-  pp_one_Dfix true (empty_env ()) 0
+  List.rev (extract_rec (empty_env ()) 0)
 
 let has_equiv = function
   | NoEquiv -> false
   | Equiv _ | RenEquiv _ -> true
 
-let pp_equiv param_list name = function
-| NoEquiv, _ -> mt ()
-| Equiv kn, i -> pp_py_alias name None (str_global Type (GlobRef.IndRef (MutInd.make1 kn,i)))
-| RenEquiv ren, _  -> pp_py_alias name (Some ren) name
+let extract_equiv name = function
+| NoEquiv, _ -> assert false
+| Equiv kn, i -> PyAssign (name, PyId (str_global Type (GlobRef.IndRef (MutInd.make1 kn,i))))
+| RenEquiv ren, _  -> PyAssign (name, PyFieldAccess (PyId ren, [name]))
 
-(*s Pretty-printing of inductive types declaration. *)
-(* pp_one_ind ip_equiv survivingTypes inductiveTypeName constructorNames constructorsArgsMLTypes*)
-let pp_one_ind ip_equiv pl name cnames ctyps =
-  let pl = rename_tvars keywords pl in
-  let pp_constructor i typs =
-    reset_gensym ();
-    let fieldnames = List.map (fun _ -> py_private_field (gensym ())) typs in
-    let fieldnames, env = py_push_vars fieldnames (empty_env ()) in
-    let fieldnames = List.map Id.print fieldnames in
-    let typenames = List.map (pp_type pl) typs in
-    pp_py_dataclass cnames.(i) pl [(name, pl)] (List.combine fieldnames typenames) []
-  in
-  if (has_equiv (fst ip_equiv)) then (pp_equiv pl name ip_equiv, mt())
+let extract_one_ind ip_equiv pl (names : string * string array) argtypes_array =
+  if (has_equiv (fst ip_equiv)) then (extract_equiv (fst names) ip_equiv, [])
   else
-    pp_py_empty_dataclass name pl [],
-      prvecti_with_sep cut2 pp_constructor ctyps
+    let pl_id = py_rename_tvars keywords pl in
+    let pl = List.map (fun p -> PyTypeId (Id.to_string p)) pl_id in
+    let extract_one_cons i argtypes =
+      reset_gensym ();
+      let fieldnames = List.map (fun _ -> py_private_field (gensym ())) argtypes in
+      let fieldnames, env = py_push_vars fieldnames (empty_env ()) in
+      let typenames = List.map (fun t -> Some (extract_type pl_id t)) argtypes in
+      let fields = List.combine fieldnames typenames in
+      let parent = PyTypeGeneric (fst names, pl) in
+      PyClassDef ((snd names).(i), pl, [parent], fields, [])
+    in
+    PyClassDef ((fst names), pl, [], [], []),
+      Array.to_list (Array.mapi extract_one_cons argtypes_array)
 
-let pp_logical_ind packet =
-  pp_comment_one_line (
-    Id.print packet.ip_typename ++ str " : logical inductive, with constructors : " ++
-    prvect_with_sep spc Id.print packet.ip_consnames)
+let comment_logical_ind packet =
+    Id.to_string packet.ip_typename ^ " : logical inductive, with constructors : " ^
+    String.concat " " (Array.map_to_list Id.to_string packet.ip_consnames)
 
-(* pretty prints an inductive type that has only one constructor,
-   and only one argument to this constructor, seen as an alias to the argument type.
+let singleton_comment_str cons_name =
+  "singleton inductive, whose constructor was " ^ Id.to_string cons_name
 
-   e.g. Inductive singleton (A: Set) := single (n: A)
-   OCaml --> type 'a singleton = 'a
-   Python --> type singleton[A] = A
-*)
-let pp_singleton kn packet =
-  let name = pp_global ~snake_case:false Type (GlobRef.IndRef (kn,0)) in
-  let pl = rename_tvars keywords packet.ip_vars in
-  let typ = pp_type pl (List.hd packet.ip_types.(0)) in
-  pp_py_typedef name (pp_py_id_generics pl) typ ++ fnl () ++
-  pp_comment_one_line (
-    str "singleton inductive, whose constructor was " ++
-    Id.print packet.ip_consnames.(0))
+let extract_singleton kn packet =
+  let name = str_global ~snake_case:false Type (GlobRef.IndRef (kn,0)) in
+  let pl_id = py_rename_tvars keywords packet.ip_vars in
+  let pl = List.map (fun p -> PyTypeId (Id.to_string p)) pl_id in
+  let typ = extract_type pl_id (List.hd packet.ip_types.(0)) in
+  PyTypeAlias (PyTypeGeneric (name, pl), typ)
+  :: PyComment (singleton_comment_str packet.ip_consnames.(0))
+  :: []
 
-let pp_record kn fields ip_equiv packet =
+let extract_record kn fields ip_equiv packet =
   let rec_type = GlobRef.IndRef (kn,0) in
   let rec_cons = GlobRef.ConstructRef ((kn,0),1) in
-  add_rec_map rec_cons rec_type;
+  add_record_map rec_cons rec_type;
 
   let type_name = str_global ~snake_case:false Type rec_type in
   (* get fieldnames from global env without saving them in global ids *)
   let fieldnames = str_fields rec_type fields in
   (* save fieldnames to local env *)
-  let fieldnames, env =
-    py_push_vars (List.map py_private_field fieldnames) (empty_env ()) in
+  let fieldnames_local, env = py_push_vars (List.map py_private_field fieldnames) (empty_env ()) in
   (* add and save getters to local env to avoid conflicts *)
-  let getternames, env = py_push_vars (List.map py_getter_from_private fieldnames) env in
-  (* rename survivingTypes if needed *)
-  let pl = rename_tvars keywords packet.ip_vars in
-  let fieldnames = List.map Id.print fieldnames in
-  let fieldtypes = List.map (pp_type pl) packet.ip_types.(0) in
-  pp_py_dataclass type_name pl []
-    (List.combine fieldnames fieldtypes) (List.map Id.print getternames)
+  let getternames, env = py_push_vars (List.map py_getter_from_private fieldnames_local) env in
+  (* add getters to getters map *)
+  List.iter2 (fun key value -> add_getter_map key value) fieldnames getternames;
 
-(* pp_ind parentTypeName mlInductiveTypeList *)
-let pp_ind kn ind =
-  (* python does not care about mutually dependent types. they are just separate types. *)
-  let (names: string array) =
-    (* mapping on inductive types, excluding logical ones *)
-    Array.mapi
-      (fun i p -> if p.ip_logical then "" else
-        str_global ~snake_case:false Type (GlobRef.IndRef (kn,i)))
-      ind.ind_packets
-  in
-  let (cnames: string array array) =
+  (* rename survivingTypes *)
+  let pl_id = py_rename_tvars keywords packet.ip_vars in
+  let pl = List.map (fun p -> PyTypeId (Id.to_string p)) pl_id in
+  let fieldtypes = List.map (fun t -> Some (extract_type pl_id t)) packet.ip_types.(0) in
+  let fields = List.combine fieldnames_local fieldtypes in
+  PyClassDef (type_name, pl, [], fields, getternames)
+
+(** Python does not care about mutually dependent types, they are just separate classes. *)
+let extract_ind kn ind =
+  (* (ind_name * cons_names) array *)
+  let names =
+    let map_names i p =
+      (* exclude logical inductive types *)
+      if p.ip_logical then "", [||]
+      else
+        let ind_name = str_global ~snake_case:false Type (GlobRef.IndRef (kn,i)) in
+        (* mapping on constructors *)
+        let cons_names =
+          Array.mapi
+            (fun j _ ->
+              str_global ~snake_case:false ~prfx:ind_name Cons (GlobRef.ConstructRef ((kn,i),j+1)))
+            p.ip_types
+        in
+        ind_name, cons_names
+    in
     (* mapping on inductive types *)
-    Array.mapi
-      (fun i p -> if p.ip_logical then [||] else
-        (* mapping on ml_type list array, constructors array with their types in a list *)
-        Array.mapi
-          (fun j _ -> str_global ~snake_case:false ~prfx:names.(i) Cons (GlobRef.ConstructRef ((kn,i),j+1)))
-          p.ip_types)
-      ind.ind_packets
+    Array.mapi map_names ind.ind_packets
   in
-  let rec pp_ind_rec acc_types acc_cons i =
-    if i = Array.length ind.ind_packets then acc_types, acc_cons
+  let rec extract_ind_rec acc_types acc_cons i =
+    if i = Array.length names then acc_types, acc_cons
     else
-      let cut_if_not_mt p = if Pp.ismt p then mt () else cut2 () in
       (* inductive type name * position of type in the list of mutually-recursive inductive types *)
       let ip = (kn,i) in
       let ip_equiv = ind.ind_equiv, i in
       let p = ind.ind_packets.(i) in
       (* if custom, do not redefine it *)
-      if is_custom (GlobRef.IndRef ip) then pp_ind_rec acc_types acc_cons (i+1)
+      if is_custom (GlobRef.IndRef ip) then extract_ind_rec acc_types acc_cons (i+1)
       else
         (* if logical, specify it and ignore it *)
         if p.ip_logical then
-          pp_ind_rec (acc_types ++ cut_if_not_mt acc_types ++ pp_logical_ind p) acc_cons (i+1)
+          extract_ind_rec (PyComment (comment_logical_ind p) :: acc_types) acc_cons (i+1)
         else
-          let typ, cons = pp_one_ind ip_equiv p.ip_vars names.(i) cnames.(i) p.ip_types in
-          pp_ind_rec
-            (acc_types ++ cut_if_not_mt acc_types ++ typ)
-            (acc_cons ++ cut_if_not_mt acc_cons ++ cons) (i+1)
+          let ind, cons = extract_one_ind ip_equiv p.ip_vars names.(i) p.ip_types in
+          (* accumulators built in reverse *)
+          extract_ind_rec (ind :: acc_types) (cons @ acc_cons) (i+1)
   in
-  let types, cons = pp_ind_rec (mt ()) (mt ()) 0 in
-  types ++ cut2 () ++ cons
+  let ind, cons = extract_ind_rec [] [] 0 in
+  (List.rev ind) @ (List.rev cons)
 
-let pp_mind kn i =
+let extract_mind kn i : py_stmt_top list =
   match i.ind_kind with
-    | Singleton -> pp_singleton kn i.ind_packets.(0)
+    | Singleton -> extract_singleton kn i.ind_packets.(0)
     (* TODO *)
-    | Coinductive -> mt ()
-    | Record fields -> pp_record kn fields (i.ind_equiv,0) i.ind_packets.(0)
-    | Standard -> pp_ind kn i
+    | Coinductive -> []
+    | Record fields -> [extract_record kn fields (i.ind_equiv,0) i.ind_packets.(0)]
+    | Standard -> extract_ind kn i
 
-(*s Pretty-printing of a declaration. *)
-let pp_decl decl =
-  match decl with
+(*s Extracting a declaration. *)
+let extract_decl = function
   (* inline custom, no need for declaration *)
-  | Dtype (r,_,_) when is_inline_custom r -> mt ()
-  | Dterm (r,_,_) when is_inline_custom r -> mt ()
-  (* inductive declaration *)
-  | Dind (kn,i) -> pp_mind kn i
-  (* type declaration *)
-  | Dtype (r, l, t) ->
-      let name = pp_global ~snake_case:false Type r in
-      let l = rename_tvars keywords l in
-      (try
-        let ids,s = find_type_custom r in
-        pp_py_typedef name (pp_py_generics str ids) (str s)
-      with Not_found ->
-        if t == Taxiom then pp_py_typevar name ++ str (" # " ^ axiom_not_realized_msg)
-        else pp_py_typedef name (pp_py_id_generics l) (pp_type l t))
-  | Dterm (r, a, t) ->
+  | Dtype (r,_,_) when is_inline_custom r -> []
+  | Dterm (r,_,_) when is_inline_custom r -> []
+  | Dfix (rv,defs,typs) -> extract_Dfix rv defs typs
+  | Dind (kn,i) -> extract_mind kn i
+  | Dterm (r,a,t) ->
       let name = str_global Term r in
-      if is_custom r then pp_py_fundef [] [str name] [] (str (find_custom r))
-      else
-        let params, fun_names, args, body, pp_body =
-          pp_function (empty_env ()) (Id.of_string name) (Some t) a in
-        pp_definition false (empty_env ()) params fun_names args pp_body body
-  | Dfix (rv,defs,typs) ->
-      pp_Dfix (rv,defs,typs)
+      if is_custom r then [PyCustomFunDef (name, find_custom r)]
+      else [fst (extract_definition_top (empty_env ()) name (Some t) a)]
+  | Dtype (r,l,t) ->
+      let name = str_global ~snake_case:false Type r in
+      let l = py_rename_tvars keywords l in
+      begin
+        try
+        let ids,s = find_type_custom r in
+        let params = List.map (fun id -> PyTypeId id) ids in
+        [PyTypeAliasCustom (PyTypeGeneric (name, params), s)]
+        with Not_found ->
+          if t == Taxiom then [PyTypeDef (name, name)]
+          else
+            let params = List.map (fun id -> PyTypeId (Id.to_string id)) l in
+            [PyTypeAlias (PyTypeGeneric (name, params), extract_type l t)]
+      end
+
+let rec pp_decl ml_decl =
+  let py_decl = extract_decl ml_decl in
+  pp_fold_stmt_top_list py_decl
+
+(*s Pretty-printing of a py_stmt_top term. *)
+and pp_py_stmt_top has_next stmt =
+  let pp_stmt, pp_sep =
+    match stmt with
+    | PyAssign (id, expr) -> pp_py_vardef id (pp_py_expr expr), fnl ()
+    | PyTypeAlias (t1, t2) -> pp_py_type_alias t1 t2, fnl ()
+    | PyTypeAliasCustom (t1, s) -> pp_py_type_alias_custom t1 s, fnl ()
+    | PyTypeDef (id, s) -> pp_py_typedef id s, fnl ()
+    | PyRaise (exn, msg) -> pp_py_raise exn msg, fnl ()
+    | PyFunDef (id, params, args, body) ->
+        pp_py_fundef id params args (pp_fold_stmt_list body), cut2 ()
+    | PyCustomFunDef (id, s) -> pp_py_fundef id [] [] (str s), cut2 ()
+    | PyClassDef (id, type_params, parents, fields, getternames) ->
+        pp_py_dataclass id type_params parents fields getternames, cut2 ()
+    | PyMatch (head, cases) ->
+        let branches =
+          List.map (fun (pat, stmts) -> pp_py_expr pat, pp_fold_stmt_top_list stmts) cases
+        in
+        pp_py_match (pp_py_expr head) branches, fnl ()
+    | PyComment s -> pp_comment_one_line s, fnl ()
+  in
+  if Pp.ismt pp_stmt then mt ()
+  else (pp_stmt ++ if has_next then pp_sep else mt ())
+
+and pp_py_stmt_fundef has_next stmt =
+  let pp_stmt, pp_sep =
+    match stmt with
+    | PyReturn e -> pp_py_ret (pp_py_expr e), fnl ()
+    | PyMatchFun (head, cases) ->
+      let branches =
+        List.map (fun (pat, stmts) -> pp_py_expr pat, pp_fold_stmt_list stmts) cases
+      in
+      pp_py_match (pp_py_expr head) branches, fnl ()
+    | PyMatchCustom (head, cases, user_input) ->
+        pp_py_match_custom (pp_py_expr head) (List.map pp_py_expr cases) user_input, fnl ()
+  in
+  if Pp.ismt pp_stmt then mt ()
+  else (pp_stmt ++ if has_next then pp_sep else mt ())
+
+and pp_py_stmt has_next = function
+  | PyStmtTop s -> pp_py_stmt_top has_next s
+  | PyStmtFunDef s -> pp_py_stmt_fundef has_next s
+
+and pp_py_expr = function
+  | PyId s -> str s
+  | PyFieldAccess (obj, ids) -> pp_py_field_access (pp_py_expr obj) ids
+  | PyApp (f, args) -> pp_py_app (pp_py_expr f) (List.map pp_py_expr args)
+  | PyCons (head, args) -> pp_py_instance (pp_py_expr head) (List.map pp_py_expr args)
+  | PyLam (ids, body) ->
+      let nl = match body with PyLam _ -> true | _ -> false in
+      pp_py_lambda nl ids (pp_py_expr body)
+  | PyTuple args -> pp_py_tuple (List.map pp_py_expr args) false
+  | PyIfExpr (cond, then_, else_) ->
+      pp_py_ifexpr (pp_py_expr cond) (pp_py_expr then_) (pp_py_expr else_)
+
+and pp_fold_stmt_top_list stmts =
+  let rec pp_fold_rec acc = function
+  | [] -> acc
+  | [stmt] -> acc ++ pp_py_stmt_top false stmt
+  | stmt :: stmts -> pp_fold_rec (acc ++ pp_py_stmt_top true stmt) stmts
+  in
+  pp_fold_rec (mt ()) stmts
+
+and pp_fold_stmt_list stmts =
+  let rec pp_fold_rec acc = function
+  | [] -> acc
+  | [stmt] -> acc ++ pp_py_stmt false stmt
+  | stmt :: stmts -> pp_fold_rec (acc ++ pp_py_stmt true stmt) stmts
+  in
+  pp_fold_rec (mt ()) stmts
 
 let pp_spec = function
   | Sval (r,_) when is_inline_custom r -> mt ()
   | Stype (r,_,_) when is_inline_custom r -> mt ()
-  | Sind (kn,i) -> pp_mind kn i
+  | Sind (kn,i) -> pp_decl (Dind (kn, i))
   | Sval (r,t) ->
-      let def = pp_type [] t in
+      let def = pp_py_type (extract_type [] t) in
       let name = pp_global Term r in
       hov 2 (str "val " ++ name ++ str " :" ++ spc () ++ def)
   | Stype (r,vl,ot) ->
       let name = pp_global Type r in
-      let l = rename_tvars keywords vl in
+      let l = py_rename_tvars keywords vl in
       let ids, def =
         try
           let ids, s = find_type_custom r in
-          pp_py_generics str ids, str " =" ++ spc () ++ str s
+          pp_py_type_params (List.map (fun id -> PyTypeId id) ids), str " =" ++ spc () ++ str s
         with Not_found ->
-          let ids = pp_py_id_generics l in
+          let ids = pp_py_type_params (List.map (fun id -> PyTypeId (Id.to_string id)) l) in
           match ot with
             | None -> ids, mt ()
             | Some Taxiom -> ids, str " (* AXIOM TO BE REALIZED *)"
-            | Some t -> ids, str " =" ++ spc () ++ pp_type l t
+            | Some t -> ids, str " =" ++ spc () ++ pp_py_type (extract_type l t)
       in
       hov 2 (str "type " ++ ids ++ name ++ def)
 
@@ -719,7 +798,7 @@ and pp_module_type params = function
           v 1 (str " " ++ prlist_with_sep cut2 identity l) ++ fnl ())
       ++ str "end"
   | MTwith(mt,ML_With_type(idl,vl,typ)) ->
-      let ids = pp_py_id_generics (rename_tvars keywords vl) in
+      let ids = pp_py_type_params (List.map (fun id -> PyTypeId (Id.to_string (id))) (py_rename_tvars keywords vl)) in
       let mp_mt = msid_of_mt mt in
       let l,idl' = List.sep_last idl in
       let mp_w =
@@ -729,7 +808,7 @@ and pp_module_type params = function
       push_visible mp_mt [];
       let pp_w = str " with type " ++ ids ++ pp_global Type r in
       pop_visible();
-      pp_module_type [] mt ++ pp_w ++ str " = " ++ pp_type vl typ
+      pp_module_type [] mt ++ pp_w ++ str " = " ++ pp_py_type (extract_type vl typ)
   | MTwith(mt,ML_With_module(idl,mp)) ->
       let mp_mt = msid_of_mt mt in
       let mp_w =

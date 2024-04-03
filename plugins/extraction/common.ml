@@ -181,7 +181,7 @@ let push_vars ids (db,avoid) =
 let remove_single_quotes (s: string) : string =
   Str.global_replace (Str.regexp "'") "" s
 
-let rec py_rename_vars avoid = function
+let py_rename_vars avoid = function
   | [] ->
       [], avoid
   | id :: idl when id == dummy_name ->
@@ -190,7 +190,7 @@ let rec py_rename_vars avoid = function
       (id :: idl', avoid')
   | id :: idl ->
       let (idl, avoid) = rename_vars avoid idl in
-      (* lowercase id *)
+      (* uncapitalize id *)
       let id = String.uncapitalize_ascii (ascii_of_id id) in
       (* remove single quotes *)
       let id = remove_single_quotes id in
@@ -198,10 +198,25 @@ let rec py_rename_vars avoid = function
       let id = rename_id (Id.of_string id) avoid in
       (id :: idl, Id.Set.add id avoid)
 
+let py_rename_tvars avoid l =
+  let rec rename avoid = function
+    | [] -> [], avoid
+    | id :: idl ->
+        let idl, avoid = rename avoid idl in
+        (* capitalize id *)
+        let id = String.capitalize_ascii (ascii_of_id id) in
+        (* remove single quotes *)
+        let id = remove_single_quotes id in
+        (* rename id *)
+        let id = rename_id (Id.of_string id) avoid in
+        (id :: idl, Id.Set.add id avoid)
+  in
+  fst (rename avoid l)
+
 let py_push_vars ?(save_db = true) ids (db,avoid) =
   let ids',avoid' = py_rename_vars avoid ids in
   let db = if save_db then ids' @ db else db in
-  ids', (db, avoid')
+  List.map Id.to_string ids', (db, avoid')
 
 let get_db_name n (db,_) = List.nth db (pred n)
 
@@ -660,13 +675,6 @@ let pp_global_with_key k key r =
 
 let str_py_global_with_key save snake_case prfx k key r =
   py_ref_renaming save snake_case prfx (k,r)
-  (* assert (List.length ls > 1); *)
-  (* FOR DEVELOPMENT PURPOSES ONLY *)
-  (* if List.length ls = 0 then "EMPTY"
-  else
-    List.fold_left
-          (fun s s' -> if String.is_empty s' then s else s ^ "." ^ s')
-          (List.hd ls) (List.tl ls) *)
 
 let pp_global k r =
   pp_global_with_key k (repr_of_r r) r

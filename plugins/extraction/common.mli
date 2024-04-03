@@ -40,10 +40,11 @@ val rename_id : Id.t -> Id.Set.t -> Id.t
 type env = Id.t list * Id.Set.t
 val empty_env : unit -> env
 
-val rename_vars: Id.Set.t -> Id.t list -> env
-val rename_tvars: Id.Set.t -> Id.t list -> Id.t list
+val rename_vars : Id.Set.t -> Id.t list -> env
+val rename_tvars : Id.Set.t -> Id.t list -> Id.t list
+val py_rename_tvars : Id.Set.t -> Id.t list -> Id.t list
 val push_vars : Id.t list -> env -> Id.t list * env
-val py_push_vars : ?save_db:bool -> Id.t list -> env -> Id.t list * env
+val py_push_vars : ?save_db:bool -> Id.t list -> env -> string list * env
 val get_db_name : int -> env -> Id.t
 
 type phase = Pre | Impl | Intf
