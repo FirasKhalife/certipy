@@ -724,7 +724,7 @@ let get_global_ids_set = fun () ->
 
 let pp_decl_w_env env ml_decl =
   let py_decl = extract_decl ml_decl in
-  disable_verification ();
+  (* disable_verification (); *)
   let env =
     StdStringSet.add "__" (StdStringSet.union (get_global_ids_set ()) !custom_db)
     |> StdStringMap.fold_left
@@ -745,7 +745,7 @@ let pp_spec env = function
   | Sval (r,t) ->
       let def = Format.asprintf "@[%t@]" (py_type (extract_type [] t)) |> str in
       let name = str_global Term r in
-      hov 2 (str "val " ++ str name ++ str " :" ++ spc () ++ def), Utils.push_id name env
+      v 4 (str "val " ++ str name ++ str " :" ++ spc () ++ def), Utils.push_id name env
   | Stype (r,vl,ot) ->
       let name = pp_global Type r in
       let l = rename_tvars keywords vl in
@@ -764,7 +764,7 @@ let pp_spec env = function
             | Some t -> ids, str " =" ++ spc () ++
                 (Format.asprintf "@[%t@]" (py_type (extract_type l t)) |> str)
       in
-      hov 2 (str "type " ++ ids ++ name ++ def), env
+      v 4 (str "type " ++ ids ++ name ++ def), env
 
 let rec pp_specif env = function
   | (_,Spec (Sval _ as s)) -> pp_spec env s
@@ -772,23 +772,23 @@ let rec pp_specif env = function
       (match Common.get_duplicate (top_visible_mp ()) l with
       | None -> pp_spec env s
       | Some ren ->
-          hov 1 (str ("module "^ren^" : sig") ++ fnl () ++ fst (pp_spec env s)) ++
+        v 1 (str ("module "^ren^" : sig") ++ fnl () ++ fst (pp_spec env s)) ++
           fnl () ++ str "end" ++ fnl () ++
           str ("include module type of struct include "^ren^" end"), env)
   | (l,Smodule mt) ->
       let def = pp_module_type [] mt in
       let name = pp_modname (MPdot (top_visible_mp (), l)) in
-      hov 1 (str "module " ++ name ++ str " :" ++ fnl () ++ def) ++
+      v 4 (str "class " ++ name ++ str ":" ++ fnl () ++ def) ++
       (match Common.get_duplicate (top_visible_mp ()) l with
         | None -> Pp.mt ()
         | Some ren ->
           fnl () ++
-          hov 1 (str ("module "^ren^" :") ++ spc () ++
+          v 4 (str ("class "^ren^":") ++ spc () ++
                 str "module type of struct include " ++ name ++ str " end")), env
   | (l,Smodtype mt) ->
       let def = pp_module_type [] mt in
       let name = pp_modname (MPdot (top_visible_mp (), l)) in
-      hov 1 (str "module type " ++ name ++ str " =" ++ fnl () ++ def) ++
+      v 4 (str "module type " ++ name ++ str " =" ++ fnl () ++ def) ++
       (match Common.get_duplicate (top_visible_mp ()) l with
         | None -> Pp.mt ()
         | Some ren -> fnl () ++ str ("module type "^ren^" = ") ++ name), env
@@ -814,7 +814,7 @@ and pp_module_type params = function
       str "sig" ++ fnl () ++
       (if List.is_empty l then mt ()
         else
-          v 1 (str " " ++ prlist_with_sep fnl2 identity l) ++ fnl ())
+          v 4 (str " " ++ prlist_with_sep fnl2 identity l) ++ fnl ())
       ++ str "end"
   | MTwith(mt,ML_With_type(idl,vl,typ)) ->
       let ids =
@@ -849,8 +849,8 @@ let rec pp_structure_elem env = function
       (match Common.get_duplicate (top_visible_mp ()) l with
       | None -> pp_decl_w_env env d
       | Some ren ->
-          v 1 (str ("module "^ren^" = struct") ++ fnl () ++ pp_decl d) ++
-          fnl () ++ str "end" ++ fnl () ++ str ("include "^ren), env)
+          v 4 (str ("class " ^ ren ^ ":") ++ fnl () ++ pp_decl d) ++
+          fnl () ++ str ("include "^ren), env)
   | (l,SEmodule m) ->
       let typ =
         (* virtual printing of the type, in order to have a correct mli later*)
@@ -858,30 +858,28 @@ let rec pp_structure_elem env = function
           str ": " ++ pp_module_type [] m.ml_mod_type
         else mt ()
       in
-      let def = pp_module_expr [] m.ml_mod_expr in
+      let def = pp_module_expr env [] m.ml_mod_expr in
       let name = pp_modname (MPdot (top_visible_mp (), l)) in
-      hov 1
-        (str "module " ++ name ++ typ ++ str " =" ++
-          (if is_short m.ml_mod_expr then spc () else fnl ()) ++ def) ++
+      v 4 (str "class " ++ name ++ typ ++ str ":" ++ fnl2 () ++ def) ++
       (match Common.get_duplicate (top_visible_mp ()) l with
-        | Some ren -> fnl () ++ str ("module "^ren^" = ") ++ name
+        | Some ren -> fnl () ++ str ("class " ^ ren ^ ": ") ++ name
         | None -> mt ()), env
   | (l,SEmodtype m) ->
       let def = pp_module_type [] m in
       let name = pp_modname (MPdot (top_visible_mp (), l)) in
-      hov 1 (str "module type " ++ name ++ str " =" ++ fnl () ++ def) ++
+      v 4 (str "module type " ++ name ++ str " =" ++ fnl () ++ def) ++
       (match Common.get_duplicate (top_visible_mp ()) l with
         | None -> mt ()
         | Some ren -> fnl () ++ str ("module type "^ren^" = ") ++ name), env
 
-and pp_module_expr params = function
+and pp_module_expr env params = function
   | MEident mp -> pp_modname mp
   | MEapply (me, me') ->
-      pp_module_expr [] me ++ str "(" ++ pp_module_expr [] me' ++ str ")"
+      pp_module_expr env [] me ++ str "(" ++ pp_module_expr env [] me' ++ str ")"
   | MEfunctor (mbid, mt, me) ->
       let name = pp_modname (MPbound mbid) in
       let typ = pp_module_type [] mt in
-      let def = pp_module_expr (MPbound mbid :: params) me in
+      let def = pp_module_expr env (MPbound mbid :: params) me in
       str "functor (" ++ name ++ str ":" ++ typ ++ str ") ->" ++ fnl () ++ def
   | MEstruct (mp, sel) ->
       push_visible mp params;

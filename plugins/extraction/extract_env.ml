@@ -736,6 +736,24 @@ let structure_for_compute env sg c =
   (flatten_structure struc), ast, mlt
 
 (* For the test-suite :
+   extraction to a temporary file + run python3.12 on it *)
+
+let compile_py f =
+  try
+    let args = [ f ] in
+    let res = CUnix.sys_command "python3.12" args in
+    match res with
+    | Unix.WEXITED 0 -> ()
+    | Unix.WEXITED n | Unix.WSIGNALED n | Unix.WSTOPPED n ->
+        CErrors.user_err
+          Pp.(str "Interpretation of file " ++ str f ++
+              str " failed with exit code " ++ int n)
+  with Unix.Unix_error (e,_,_) ->
+    CErrors.user_err
+      Pp.(str "Interpretation of file " ++ str f ++
+          str " failed with error " ++ str (Unix.error_message e))
+
+(* For the test-suite :
    extraction to a temporary file + run ocamlc on it *)
 
 let compile f =
@@ -762,14 +780,20 @@ let remove f =
   if Sys.file_exists f then Sys.remove f
 
 let extract_and_compile l =
-  if lang () != Ocaml then
-    CErrors.user_err (Pp.str "This command only works with OCaml extraction");
-  let f = Filename.temp_file "testextraction" ".ml" in
+  let compile_fun, pre_ext, post_ext_l =
+   match lang () with
+    | Ocaml -> compile, ".ml", [".cmo";".cmi"]
+    | Python -> compile_py, ".py", []
+    | _ ->
+        CErrors.user_err
+          (Pp.str "This command only works with OCaml and Python extraction");
+  in
+  let f = Filename.temp_file "testextraction" pre_ext in
   let () = full_extraction (Some f) l in
-  let () = compile f in
+  let () = compile_fun f in
   let () = remove f; remove (f^"i") in
-  let base = Filename.chop_suffix f ".ml" in
-  let () = remove (base^".cmo"); remove (base^".cmi") in
+  let base = Filename.chop_suffix f pre_ext in
+  let () = List.iter (fun ext -> remove (base ^ ext)) post_ext_l in
   Feedback.msg_notice (str "Extracted code successfully compiled")
 
 (* Show the extraction of the current ongoing proof *)
