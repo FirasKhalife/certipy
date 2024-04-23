@@ -262,7 +262,8 @@ let mktable_ref autoclean =
   let clear () = m := Refmap'.empty in
   if autoclean then register_cleanup clear;
   (fun r v -> m := Refmap'.add r v !m), (fun r -> Refmap'.find r !m),
-    (fun r -> m := Refmap'.remove r !m), clear
+    (fun r -> m := Refmap'.remove r !m),
+    (* (fun f acc -> Refmap'.fold f !m acc) *) clear
 
 let mktable_modpath autoclean =
   let m = ref MPmap.empty in
@@ -463,10 +464,13 @@ let py_ref_renaming_fun save snake_case prfx (k,r) =
     let idg = safe_basename_of_global r in
     match l with
     | [""] -> (* this happens only at toplevel of the monolithic case *)
-      let globs = get_global_ids () in
-      let id = py_next_ident_away snake_case prfx (mp, idg) globs in
-      Id.to_string id
-    | _ -> "MODULAR RENAMING:" ^ modular_rename k idg
+        let globs = get_global_ids () in
+        let id = py_next_ident_away snake_case prfx (mp, idg) globs in
+        Id.to_string id
+    | _ -> (* modular renaming *)
+        let globs = get_global_ids () in
+        let id = py_next_ident_away snake_case prfx (mp, idg) globs in
+        Id.to_string id
   in
   if save then add_global_ids (Id.of_string s) else (); s
 
@@ -488,6 +492,8 @@ let py_ref_renaming =
     with Not_found ->
       let y = py_ref_renaming_fun save snake_case prfx x in
       add r y; y
+
+let get_global_ids () = get_global_ids ()
 
 (* [visible_clash mp0 (k,s)] checks if [mp0-s] of kind [k]
    can be printed as [s] in the current context of visible

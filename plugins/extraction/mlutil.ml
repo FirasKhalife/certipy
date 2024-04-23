@@ -706,15 +706,6 @@ let collect_lams =
     | x           -> acc,x
   in collect []
 
-(*s [collect_tarrs Tarr(id1,...Tarr(idn,t)...)] returns
-    [[idn;...;id1]] and the type [t]. *)
-
-let collect_tarrs =
-  let rec collect acc = function
-    | Tarr(id,t) -> collect (id::acc) t
-    | x           -> acc,x
-  in collect []
-
 (*s [collect_n_lams] does the same for a precise number of [MLlam]. *)
 
 let collect_n_lams =
@@ -724,6 +715,26 @@ let collect_n_lams =
       | MLlam(id,t) -> collect (id::acc) (n-1) t
       | _ -> assert false
   in collect []
+
+(*s [collect_tarrs Tarr(id1,...Tarr(idn,t)...)] returns
+    [[idn;...;id1]] and the type [t]. *)
+
+let collect_tarrs =
+  let rec collect acc = function
+    | Tarr(id,t) -> collect (id::acc) t
+    | x           -> acc,x
+  in collect []
+
+(*s [collect_n_tarrs] does the same for a precise number of [Tarr]. *)
+
+let collect_n_tarrs =
+  let rec collect acc n t =
+    if Int.equal n 0 then acc,t
+    else match t with
+      | Tarr(id,t) -> collect (id::acc) (n-1) t
+      | _ -> assert false
+  in collect []
+
 
 (*s [remove_n_lams] just removes some [MLlam]. *)
 

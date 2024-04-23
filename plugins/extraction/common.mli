@@ -62,6 +62,8 @@ val pp_global : kind -> GlobRef.t -> string
 val pp_global_name : kind -> GlobRef.t -> string
 val pp_module : ModPath.t -> string
 
+val get_global_ids : unit -> Names.Id.Set.t
+
 val top_visible_mp : unit -> ModPath.t
 (* In [push_visible], the [module_path list] corresponds to
    module parameters, the innermost one coming first in the list *)

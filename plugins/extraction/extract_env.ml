@@ -534,11 +534,12 @@ let print_structure_to_file (fn,si,mo) dry struc =
     tdummy = struct_type_search Mlutil.isTdummy struc;
     tunknown = struct_type_search ((==) Tunknown) struc;
     magic =
-      if lang () != Haskell then false
+      if lang () != Haskell || lang () != Python then false
       else struct_ast_search (function MLmagic _ -> true | _ -> false) struc }
   in
   (* First, a dry run, for computing objects to rename or duplicate *)
   set_phase Pre;
+  if lang () = Python then Python.clear_imports ();
   ignore (d.pp_struct struc);
   let opened = opened_libraries () in
   (* Print the implementation *)

@@ -631,6 +631,9 @@ Extraction Language Scheme.
 (* Extraction "test_extraction.scm" Everything. *)
 Recursive Extraction Everything.
 
+Extraction Language Python.
+(* Extraction "test_extraction.py" Everything. *)
+Recursive Extraction Everything.
 
 (*** Finally, a test more focused on everyday's life situations ***)
 
